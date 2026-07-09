@@ -49,6 +49,12 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
+	// CircuitBreakerFailureThreshold overrides the global failure threshold for this channel.
+	// nil means use the global default. Only honored when auto_ban=0.
+	CircuitBreakerFailureThreshold *int `json:"circuit_breaker_failure_threshold,omitempty"`
+	// CircuitBreakerCooldownSeconds overrides the global cooldown seconds for this channel.
+	// nil means use the global default. Only honored when auto_ban=0.
+	CircuitBreakerCooldownSeconds *int `json:"circuit_breaker_cooldown_seconds,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

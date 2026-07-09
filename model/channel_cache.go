@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/service/circuitbreaker"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -115,12 +116,12 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
+	channels := filterOpenCircuitBreakerChannels(filterChannelsByRequestPath(group2model2channels[group][model], requestPath), model)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
+		channels = filterOpenCircuitBreakerChannels(filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath), model)
 	}
 
 	if len(channels) == 0 {
@@ -128,10 +129,16 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 
 	if len(channels) == 1 {
-		if channel, ok := channelsIDM[channels[0]]; ok {
-			return channel, nil
+		channel, ok := channelsIDM[channels[0]]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channels[0])
 		}
-		return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channels[0])
+		// HALF_OPEN: claim the single probe slot; if held by another request, this
+		// channel is unavailable right now.
+		if !channel.GetAutoBan() && circuitbreaker.IsHalfOpen(channel.Id, model) && !circuitbreaker.AllowProbe(channel.Id, model) {
+			return nil, nil
+		}
+		return channel, nil
 	}
 
 	uniquePriorities := make(map[int]bool)
@@ -193,6 +200,17 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 
 	// Find a channel based on its weight
 	for _, channel := range targetChannels {
+		// Circuit breaker (auto_ban=0 channels only): skip OPEN entries and, for
+		// HALF_OPEN, only let the single probe winner through. A channel denied the
+		// probe slot contributes zero effective weight so it is not selected.
+		if !channel.GetAutoBan() {
+			if circuitbreaker.IsOpen(channel.Id, model) {
+				continue
+			}
+			if circuitbreaker.IsHalfOpen(channel.Id, model) && !circuitbreaker.AllowProbe(channel.Id, model) {
+				continue
+			}
+		}
 		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
 		if randomWeight < 0 {
 			return channel, nil
@@ -207,8 +225,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 // configured routes matches requestPath. All other channel types always pass.
 // When requestPath is empty (non-relay callers) filtering is skipped.
 // Caller must hold channelSyncLock (read lock). The cached slice is never mutated.
-func filterChannelsByRequestPath(channels []int, requestPath string) []int {
-	if requestPath == "" || len(channels) == 0 {
+func filterChannelsByRequestPath(channels []int, requestPath string) []int {	if requestPath == "" || len(channels) == 0 {
 		return channels
 	}
 	filtered := make([]int, 0, len(channels))
@@ -226,6 +243,32 @@ func filterChannelsByRequestPath(channels []int, requestPath string) []int {
 		if config := channel2advancedCustomConfig[channelId]; config != nil && config.SupportsPath(requestPath) {
 			filtered = append(filtered, channelId)
 		}
+	}
+	return filtered
+}
+
+// filterOpenCircuitBreakerChannels removes circuit-breaker-OPEN channel:model
+// entries from the candidates so they are not selected. Only auto_ban=0 channels
+// are affected; auto_ban=1 channels keep using the auto-ban path and always pass.
+// HALF_OPEN entries are kept here and gated later in the weighted loop, since the
+// single probe slot may still be claimable. Caller must hold channelSyncLock (read
+// lock). The cached slice is never mutated.
+func filterOpenCircuitBreakerChannels(channels []int, model string) []int {
+	if len(channels) == 0 {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, channelId := range channels {
+		channel, ok := channelsIDM[channelId]
+		if !ok {
+			// keep it so the downstream consistency error is raised as before
+			filtered = append(filtered, channelId)
+			continue
+		}
+		if !channel.GetAutoBan() && circuitbreaker.IsOpen(channel.Id, model) {
+			continue
+		}
+		filtered = append(filtered, channelId)
 	}
 	return filtered
 }
