@@ -1290,7 +1290,7 @@
     "Delete (": "Delete (",
     "Delete {{count}} API key(s)?": "Delete {{count}} API key(s)?",
     "Delete {{count}} stale instance records? Online instances will not be deleted.": "Delete {{count}} stale instance records? Online instances will not be deleted.",
-    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? Only configured/mapped policies no longer declared by channel models/mapping will be removed.": "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? Only configured/mapped policies no longer declared by channel models/mapping will be removed.",
+    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? This removes all route data for deleted channels and configured/mapped policies no longer declared by existing channels.": "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? This removes all route data for deleted channels and configured/mapped policies no longer declared by existing channels.",
     "Delete a runtime request header": "Delete a runtime request header",
     "Delete Account": "Delete Account",
     "Delete All Disabled": "Delete All Disabled",

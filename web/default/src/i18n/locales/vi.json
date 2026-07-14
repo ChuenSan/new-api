@@ -1290,7 +1290,7 @@
     "Delete (": "Xóa (",
     "Delete {{count}} API key(s)?": "Xóa {{count}} khóa API?",
     "Delete {{count}} stale instance records? Online instances will not be deleted.": "Xóa {{count}} bản ghi phiên bản mất kết nối? Các phiên bản đang trực tuyến sẽ không bị xóa.",
-    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? Only configured/mapped policies no longer declared by channel models/mapping will be removed.": "Xóa {{policies}} chính sách mồ côi và {{metrics}} chỉ số mồ côi? Chỉ xóa configured/mapped không còn trong models/mapping của kênh.",
+    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? This removes all route data for deleted channels and configured/mapped policies no longer declared by existing channels.": "Xóa {{policies}} chính sách mồ côi và {{metrics}} chỉ số mồ côi? Thao tác này xóa toàn bộ dữ liệu định tuyến của kênh đã xóa và các chính sách configured/mapped không còn được khai báo bởi kênh hiện có.",
     "Delete a runtime request header": "Xóa header yêu cầu runtime",
     "Delete Account": "Xóa tài khoản",
     "Delete All Disabled": "Xóa Tất Cả Đã Tắt",

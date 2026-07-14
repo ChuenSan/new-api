@@ -207,9 +207,58 @@ func resolvePolicyEffectiveModelLocal(requestedModel, modelMappingJSON string) s
 	return effective
 }
 
+func pruneDeletedChannelRows(opts PruneOptions) (PruneResult, error) {
+	var res PruneResult
+	policies, err := model.ListOrphanChannelModelPolicies()
+	if err != nil {
+		return res, err
+	}
+	metricsRows, err := model.ListOrphanChannelModelMetrics()
+	if err != nil {
+		return res, err
+	}
+
+	channelIDs := make(map[int64]struct{})
+	for i := range policies {
+		p := policies[i]
+		res.PolicyKeys = append(res.PolicyKeys, PrunePolicyKey{
+			ChannelID:      p.ChannelID,
+			RequestedModel: p.RequestedModel,
+			Source:         p.Source,
+		})
+		res.PoliciesDeleted++
+		channelIDs[p.ChannelID] = struct{}{}
+	}
+	for i := range metricsRows {
+		m := metricsRows[i]
+		res.MetricsKeys = append(res.MetricsKeys, PruneMetricsKey{
+			ChannelID:      m.ChannelID,
+			EffectiveModel: m.EffectiveModel,
+		})
+		res.MetricsDeleted++
+		channelIDs[m.ChannelID] = struct{}{}
+	}
+	if opts.DryRun || len(channelIDs) == 0 {
+		return res, nil
+	}
+
+	ids := make([]int, 0, len(channelIDs))
+	for id := range channelIDs {
+		ids = append(ids, int(id))
+	}
+	if err := model.DeleteChannelModelRouteData(ids); err != nil {
+		return PruneResult{}, err
+	}
+	InvalidateAllRoutePlans()
+	return res, nil
+}
+
 // PruneOrphanPoliciesAll prunes every channel.
 func PruneOrphanPoliciesAll(opts PruneOptions) (PruneResult, error) {
-	var res PruneResult
+	res, err := pruneDeletedChannelRows(opts)
+	if err != nil {
+		return res, err
+	}
 	channels, err := model.GetAllChannels(0, 0, true, true)
 	if err != nil {
 		return res, err

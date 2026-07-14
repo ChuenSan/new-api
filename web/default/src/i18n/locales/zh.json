@@ -1290,7 +1290,7 @@
     "Delete (": "删除 (",
     "Delete {{count}} API key(s)?": "删除 {{count}} 个 API 密钥？",
     "Delete {{count}} stale instance records? Online instances will not be deleted.": "删除 {{count}} 条失联实例记录？在线实例不会被删除。",
-    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? Only configured/mapped policies no longer declared by channel models/mapping will be removed.": "将删除 {{policies}} 条无效策略与 {{metrics}} 条孤立指标。仅清理渠道 models/mapping 已不再声明的 configured/mapped 策略，是否继续？",
+    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? This removes all route data for deleted channels and configured/mapped policies no longer declared by existing channels.": "将删除 {{policies}} 条无效策略与 {{metrics}} 条孤立指标，包括已删除渠道的全部路由数据，以及现有渠道不再声明的 configured/mapped 策略。是否继续？",
     "Delete a runtime request header": "删除运行期请求头",
     "Delete Account": "删除账户",
     "Delete All Disabled": "删除所有已禁用",

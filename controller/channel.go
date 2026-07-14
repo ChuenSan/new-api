@@ -713,6 +713,7 @@ func DeleteChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	modelroute.InvalidateAllRoutePlans()
 	recordManageAudit(c, "channel.delete", map[string]interface{}{
 		"id":   id,
 		"name": channelName,
@@ -731,6 +732,7 @@ func DeleteDisabledChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	modelroute.InvalidateAllRoutePlans()
 	recordManageAudit(c, "channel.delete_disabled", map[string]interface{}{
 		"count": rows,
 	})
@@ -887,6 +889,7 @@ func DeleteChannelBatch(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	modelroute.InvalidateAllRoutePlans()
 	recordManageAudit(c, "channel.delete_batch", map[string]interface{}{
 		"count": len(channelBatch.Ids),
 	})

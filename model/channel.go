@@ -456,22 +456,50 @@ func BatchDeleteChannels(ids []int) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	// 使用事务 分批删除channel表和abilities表
-	tx := DB.Begin()
-	if tx.Error != nil {
-		return tx.Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return deleteChannelsWithRelations(tx, ids)
+	})
+}
+
+func deleteChannelModelRouteData(tx *gorm.DB, ids []int) error {
+	for _, chunk := range lo.Chunk(ids, 200) {
+		if err := tx.Where("channel_id in (?)", chunk).Delete(&ChannelModelPolicy{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("channel_id in (?)", chunk).Delete(&ChannelModelMetrics{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteChannelsWithRelations(tx *gorm.DB, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, chunk := range lo.Chunk(ids, 200) {
+		if err := tx.Where("channel_id in (?)", chunk).Delete(&Ability{}).Error; err != nil {
+			return err
+		}
+	}
+	if err := deleteChannelModelRouteData(tx, ids); err != nil {
+		return err
 	}
 	for _, chunk := range lo.Chunk(ids, 200) {
 		if err := tx.Where("id in (?)", chunk).Delete(&Channel{}).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Where("channel_id in (?)", chunk).Delete(&Ability{}).Error; err != nil {
-			tx.Rollback()
 			return err
 		}
 	}
-	return tx.Commit().Error
+	return nil
+}
+
+func DeleteChannelModelRouteData(ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return deleteChannelModelRouteData(tx, ids)
+	})
 }
 
 func (channel *Channel) GetPriority() int64 {
@@ -593,13 +621,10 @@ func (channel *Channel) UpdateBalance(balance float64) {
 }
 
 func (channel *Channel) Delete() error {
-	var err error
-	err = DB.Delete(channel).Error
-	if err != nil {
-		return err
+	if channel.Id == 0 {
+		return errors.New("channel id is empty")
 	}
-	err = channel.DeleteAbilities()
-	return err
+	return BatchDeleteChannels([]int{channel.Id})
 }
 
 var channelStatusLock sync.Mutex
@@ -868,13 +893,22 @@ func updateChannelUsedQuota(id int, quota int) {
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	return deleteChannelsByStatuses([]int64{status})
 }
 
 func DeleteDisabledChannel() (int64, error) {
-	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	return deleteChannelsByStatuses([]int64{common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled})
+}
+
+func deleteChannelsByStatuses(statuses []int64) (int64, error) {
+	var ids []int
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Channel{}).Where("status in (?)", statuses).Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		return deleteChannelsWithRelations(tx, ids)
+	})
+	return int64(len(ids)), err
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {

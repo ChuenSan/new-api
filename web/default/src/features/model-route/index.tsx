@@ -281,7 +281,7 @@ export function ModelRouteAdmin() {
       if (
         !window.confirm(
           t(
-            'Delete {{policies}} orphan policies and {{metrics}} orphan metrics? Only configured/mapped policies no longer declared by channel models/mapping will be removed.',
+            'Delete {{policies}} orphan policies and {{metrics}} orphan metrics? This removes all route data for deleted channels and configured/mapped policies no longer declared by existing channels.',
             { policies, metrics }
           )
         )

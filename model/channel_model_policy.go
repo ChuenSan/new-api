@@ -116,6 +116,16 @@ func ListAllChannelModelPolicies() ([]ChannelModelPolicy, error) {
 	return rows, err
 }
 
+func ListOrphanChannelModelPolicies() ([]ChannelModelPolicy, error) {
+	var rows []ChannelModelPolicy
+	err := DB.Table("channel_model_policy as cmp").
+		Select("cmp.*").
+		Joins("left join channels on channels.id = cmp.channel_id").
+		Where("channels.id is null").
+		Scan(&rows).Error
+	return rows, err
+}
+
 // UpsertChannelModelPolicy inserts or updates a policy by primary key.
 // On conflict, updates manual_priority / enabled / source / updated_at.
 func UpsertChannelModelPolicy(p *ChannelModelPolicy) error {

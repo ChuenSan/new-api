@@ -1290,7 +1290,7 @@
     "Delete (": "削除 (",
     "Delete {{count}} API key(s)?": "{{count}}個のAPIキーを削除しますか？",
     "Delete {{count}} stale instance records? Online instances will not be deleted.": "期限切れインスタンスレコードを {{count}} 件削除しますか？オンラインのインスタンスは削除されません。",
-    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? Only configured/mapped policies no longer declared by channel models/mapping will be removed.": "{{policies}} 件の無効ポリシーと {{metrics}} 件の孤立メトリクスを削除します。チャネルの models/mapping で宣言されていない configured/mapped のみが対象です。続行しますか？",
+    "Delete {{policies}} orphan policies and {{metrics}} orphan metrics? This removes all route data for deleted channels and configured/mapped policies no longer declared by existing channels.": "{{policies}} 件の無効ポリシーと {{metrics}} 件の孤立メトリクスを削除します。削除済みチャネルの全ルートデータと、既存チャネルで宣言されなくなった configured/mapped ポリシーが対象です。続行しますか？",
     "Delete a runtime request header": "ランタイムリクエストヘッダーを削除",
     "Delete Account": "アカウント削除",
     "Delete All Disabled": "すべての無効なものを削除",

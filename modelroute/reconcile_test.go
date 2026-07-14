@@ -158,3 +158,70 @@ func TestPruneOrphanPoliciesForChannel_MappedKeyRemoved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, met)
 }
+
+func TestPruneOrphanPoliciesAll_RemovesDeletedChannelRows(t *testing.T) {
+	clearRouteTables(t)
+
+	valid := &model.Channel{
+		Id: 92, Name: "valid", Models: "valid-model", Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(valid).Error)
+	require.NoError(t, model.UpsertChannelModelPolicy(&model.ChannelModelPolicy{
+		ChannelID: 92, RequestedModel: "valid-model", Enabled: true, Source: model.PolicySourceConfigured,
+	}))
+	require.NoError(t, model.UpsertChannelModelMetrics(&model.ChannelModelMetrics{
+		ChannelID: 92, EffectiveModel: "valid-model", RouteState: string(model.RouteUnknown),
+	}))
+
+	require.NoError(t, model.UpsertChannelModelPolicy(&model.ChannelModelPolicy{
+		ChannelID: 91, RequestedModel: "configured-orphan", Enabled: true, Source: model.PolicySourceConfigured,
+	}))
+	require.NoError(t, model.UpsertChannelModelPolicy(&model.ChannelModelPolicy{
+		ChannelID: 91, RequestedModel: "lazy-orphan", Enabled: true, Source: model.PolicySourceLazyCreated,
+	}))
+	require.NoError(t, model.UpsertChannelModelMetrics(&model.ChannelModelMetrics{
+		ChannelID: 91, EffectiveModel: "configured-orphan", RouteState: string(model.RouteUnknown),
+	}))
+	require.NoError(t, model.UpsertChannelModelMetrics(&model.ChannelModelMetrics{
+		ChannelID: 91, EffectiveModel: "lazy-orphan", RouteState: string(model.RouteUnknown),
+	}))
+	StoreRoutePlan(&model.RoutePlan{RequestedModel: "configured-orphan"})
+
+	preview, err := PruneOrphanPoliciesAll(PruneOptions{
+		DryRun: true, Sources: []string{model.PolicySourceConfigured},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, preview.PoliciesDeleted)
+	assert.Equal(t, 2, preview.MetricsDeleted)
+	require.Len(t, preview.PolicyKeys, 2)
+	assert.NotNil(t, GetCachedRoutePlan("configured-orphan"))
+	require.NotNil(t, mustGetPolicy(t, 91, "lazy-orphan"))
+
+	result, err := PruneOrphanPoliciesAll(PruneOptions{
+		Sources: []string{model.PolicySourceConfigured},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.PoliciesDeleted)
+	assert.Equal(t, 2, result.MetricsDeleted)
+	assert.Nil(t, GetCachedRoutePlan("configured-orphan"))
+	assert.Nil(t, mustGetPolicy(t, 91, "configured-orphan"))
+	assert.Nil(t, mustGetPolicy(t, 91, "lazy-orphan"))
+	assert.Nil(t, mustGetMetrics(t, 91, "configured-orphan"))
+	assert.Nil(t, mustGetMetrics(t, 91, "lazy-orphan"))
+	require.NotNil(t, mustGetPolicy(t, 92, "valid-model"))
+	require.NotNil(t, mustGetMetrics(t, 92, "valid-model"))
+}
+
+func mustGetPolicy(t *testing.T, channelID int64, requestedModel string) *model.ChannelModelPolicy {
+	t.Helper()
+	policy, err := model.GetChannelModelPolicy(channelID, requestedModel)
+	require.NoError(t, err)
+	return policy
+}
+
+func mustGetMetrics(t *testing.T, channelID int64, effectiveModel string) *model.ChannelModelMetrics {
+	t.Helper()
+	metrics, err := model.GetChannelModelMetrics(channelID, effectiveModel)
+	require.NoError(t, err)
+	return metrics
+}

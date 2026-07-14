@@ -185,6 +185,16 @@ func ListAllChannelModelMetrics() ([]ChannelModelMetrics, error) {
 	return rows, err
 }
 
+func ListOrphanChannelModelMetrics() ([]ChannelModelMetrics, error) {
+	var rows []ChannelModelMetrics
+	err := DB.Table("channel_model_metrics as cmm").
+		Select("cmm.*").
+		Joins("left join channels on channels.id = cmm.channel_id").
+		Where("channels.id is null").
+		Scan(&rows).Error
+	return rows, err
+}
+
 // metricsSnapshotUpdateColumns are columns updated on periodic / critical snapshot upsert (PRD §17).
 var metricsSnapshotUpdateColumns = []string{
 	"route_state",
