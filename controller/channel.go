@@ -772,6 +772,7 @@ func DisableTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	cascadeMetricsForChannelsByTag(channelTag.Tag, common.ChannelStatusManuallyDisabled)
 	recordManageAudit(c, "channel.tag_disable", map[string]interface{}{
 		"tag": channelTag.Tag,
 	})
@@ -798,6 +799,7 @@ func EnableTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	cascadeMetricsForChannelsByTag(channelTag.Tag, common.ChannelStatusEnabled)
 	recordManageAudit(c, "channel.tag_enable", map[string]interface{}{
 		"tag": channelTag.Tag,
 	})
@@ -1110,6 +1112,7 @@ func UpdateChannelStatus(c *gin.Context) {
 	if changed {
 		model.InitChannelCache()
 		service.ResetProxyClientCache()
+		cascadeMetricsForChannelStatus(id, req.Status)
 	}
 	recordManageAudit(c, "channel.status_update", map[string]interface{}{
 		"id":      id,
@@ -1133,6 +1136,7 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 	for _, id := range req.Ids {
 		if model.UpdateChannelStatus(id, "", req.Status, "manual batch operation") {
 			changedCount++
+			cascadeMetricsForChannelStatus(id, req.Status)
 		}
 	}
 	if changedCount > 0 {
@@ -1153,6 +1157,31 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 
 func isManageableChannelStatus(status int) bool {
 	return status == common.ChannelStatusEnabled || status == common.ChannelStatusManuallyDisabled
+}
+
+// cascadeMetricsForChannelStatus mirrors modelroute cascade; failures are logged only
+// (channel status already committed).
+func cascadeMetricsForChannelStatus(channelID int, status int) {
+	if status != common.ChannelStatusEnabled && status != common.ChannelStatusManuallyDisabled {
+		return
+	}
+	if _, err := modelroute.CascadeMetricsForChannelStatus(int64(channelID), status); err != nil {
+		common.SysLog(fmt.Sprintf("cascade metrics for channel status: channel_id=%d status=%d error=%v", channelID, status, err))
+	}
+}
+
+func cascadeMetricsForChannelsByTag(tag string, status int) {
+	channels, err := model.GetChannelsByTag(tag, false, false)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("cascade metrics by tag: list tag=%s error=%v", tag, err))
+		return
+	}
+	for _, ch := range channels {
+		if ch == nil {
+			continue
+		}
+		cascadeMetricsForChannelStatus(ch.Id, status)
+	}
 }
 
 // equalStringPtr 比较两个 *string 是否相等（均为 nil 视为相等）。

@@ -160,3 +160,38 @@ func AdminForceState(channelID int64, effectiveModel string, event TransitionEve
 	ApplyTransition(m, event, 0)
 	return GlobalCalibrationPersister.SnapshotCritical(m)
 }
+
+// CascadeMetricsForChannelStatus applies metrics transitions when a channel is
+// manually enabled/disabled. status=2 → EventManualDisable for all metrics;
+// status=1 → EventRestoreAuto; other status → no-op. Empty metrics list is OK.
+func CascadeMetricsForChannelStatus(channelID int64, status int) (int, error) {
+	var event TransitionEvent
+	switch status {
+	case common.ChannelStatusManuallyDisabled:
+		event = EventManualDisable
+	case common.ChannelStatusEnabled:
+		event = EventRestoreAuto
+	default:
+		return 0, nil
+	}
+	rows, err := model.ListChannelModelMetricsByChannel(channelID)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	n := 0
+	var firstErr error
+	for i := range rows {
+		if err := AdminForceState(rows[i].ChannelID, rows[i].EffectiveModel, event); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("cascade metrics channel=%d model=%s: %w", rows[i].ChannelID, rows[i].EffectiveModel, err)
+			}
+			// channel status already committed; keep cascading remaining rows
+			continue
+		}
+		n++
+	}
+	return n, firstErr
+}
