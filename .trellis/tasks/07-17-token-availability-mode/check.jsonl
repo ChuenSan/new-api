@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify retry/error boundaries and no forged success"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Regression and test expectations"}
+{"file": ".trellis/spec/backend/token-availability-mode.md", "reason": "Verify token, selector reset, and hard-stop contracts"}
+{"file": ".trellis/tasks/07-17-token-availability-mode/prd.md", "reason": "Acceptance criteria AC1–AC7"}
+{"file": ".trellis/tasks/07-17-token-availability-mode/design.md", "reason": "Hard boundaries and channel-priority used-skip"}

@@ -29,9 +29,16 @@ type ModelRequest struct {
 	Group string `json:"group,omitempty"`
 }
 
+func IsTokenAvailabilityMode(c *gin.Context) bool {
+	return c != nil && c.Request != nil &&
+		common.GetContextKeyBool(c, constant.ContextKeyTokenAvailabilityMode) &&
+		!strings.HasPrefix(c.Request.URL.Path, "/v1/realtime")
+}
+
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
+		availabilityMode := IsTokenAvailabilityMode(c)
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
@@ -139,7 +146,7 @@ func Distribute() func(c *gin.Context) {
 						RequestPath: c.Request.URL.Path,
 						Retry:       common.GetPointer(0),
 					})
-					if err != nil {
+					if err != nil && !availabilityMode {
 						showGroup := usingGroup
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
@@ -153,7 +160,7 @@ func Distribute() func(c *gin.Context) {
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
 						return
 					}
-					if channel == nil {
+					if channel == nil && !availabilityMode {
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
 						return
 					}

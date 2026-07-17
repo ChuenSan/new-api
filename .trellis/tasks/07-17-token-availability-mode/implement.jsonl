@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Relay error shapes, skip-retry, status handling conventions"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Token column AutoMigrate and GORM update patterns"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Test and review bar for controller/service changes"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "controller/service/model layering for token + relay"}
+{"file": ".trellis/spec/backend/token-availability-mode.md", "reason": "Cross-layer field and infinite relay-round contract"}
+{"file": ".trellis/tasks/07-17-token-availability-mode/prd.md", "reason": "Product requirements and acceptance"}
+{"file": ".trellis/tasks/07-17-token-availability-mode/design.md", "reason": "Technical design for availability-mode replay"}
+{"file": ".trellis/tasks/07-17-token-availability-mode/implement.md", "reason": "Ordered implementation checklist"}

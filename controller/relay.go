@@ -188,60 +188,81 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	availabilityMode := middleware.IsTokenAvailabilityMode(c) && relayFormat != types.RelayFormatOpenAIRealtime
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
-		relayInfo.RetryIndex = retryParam.GetRetry()
-		channel, channelErr := getChannel(c, relayInfo, retryParam)
-		if channelErr != nil {
-			logger.LogError(c, channelErr.Error())
-			newAPIError = channelErr
-			break
-		}
+	for {
+		availabilityRetry := false
+		roundAttemptedUpstream := false
 
-		addUsedChannel(c, channel.Id)
-		bodyStorage, bodyErr := common.GetBodyStorage(c)
-		if bodyErr != nil {
-			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
-			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
-				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
-			} else {
-				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+			relayInfo.RetryIndex = retryParam.GetRetry()
+			channel, channelErr := getChannel(c, relayInfo, retryParam)
+			if channelErr != nil {
+				logger.LogError(c, channelErr.Error())
+				newAPIError = channelErr
+				availabilityRetry = true
+				service.ReleaseModelRouteProductionSlot(c)
+				break
 			}
-			break
-		}
-		c.Request.Body = io.NopCloser(bodyStorage)
 
-		switch relayFormat {
-		case types.RelayFormatOpenAIRealtime:
-			newAPIError = relay.WssHelper(c, relayInfo)
-		case types.RelayFormatClaude:
-			newAPIError = relay.ClaudeHelper(c, relayInfo)
-		case types.RelayFormatGemini:
-			newAPIError = geminiRelayHandler(c, relayInfo)
-		default:
-			newAPIError = relayHandler(c, relayInfo)
-		}
+			addUsedChannel(c, channel.Id)
+			bodyStorage, bodyErr := common.GetBodyStorage(c)
+			if bodyErr != nil {
+				// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
+				if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
+					newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
+				} else {
+					newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+				}
+				break
+			}
+			c.Request.Body = io.NopCloser(bodyStorage)
+			roundAttemptedUpstream = true
 
-		if newAPIError == nil {
-			relayInfo.LastError = nil
-			notifyModelRouteProduction(c, channel, relayInfo, true, 0, false)
-			// release concurrency after success (stream already finished when helper returns)
+			switch relayFormat {
+			case types.RelayFormatOpenAIRealtime:
+				newAPIError = relay.WssHelper(c, relayInfo)
+			case types.RelayFormatClaude:
+				newAPIError = relay.ClaudeHelper(c, relayInfo)
+			case types.RelayFormatGemini:
+				newAPIError = geminiRelayHandler(c, relayInfo)
+			default:
+				newAPIError = relayHandler(c, relayInfo)
+			}
+
+			if newAPIError == nil {
+				relayInfo.LastError = nil
+				notifyModelRouteProduction(c, channel, relayInfo, true, 0, false)
+				// release concurrency after success (stream already finished when helper returns)
+				service.ReleaseModelRouteProductionSlot(c)
+				return
+			}
+
+			availabilityRetry = true
+			newAPIError = service.NormalizeViolationFeeError(newAPIError)
+			relayInfo.LastError = newAPIError
+
+			streamInterrupted := relayInfo != nil && relayInfo.HasSendResponse()
+			notifyModelRouteProduction(c, channel, relayInfo, false, newAPIError.StatusCode, streamInterrupted)
+			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+			// free slot so overflow capacity is available for next try / concurrent requests
 			service.ReleaseModelRouteProductionSlot(c)
-			return
+
+			if availabilityMode && streamInterrupted {
+				break
+			}
+			if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+				break
+			}
 		}
 
-		newAPIError = service.NormalizeViolationFeeError(newAPIError)
-		relayInfo.LastError = newAPIError
-
-		streamInterrupted := relayInfo != nil && relayInfo.HasSendResponse()
-		notifyModelRouteProduction(c, channel, relayInfo, false, newAPIError.StatusCode, streamInterrupted)
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-		// free slot so overflow capacity is available for next try / concurrent requests
-		service.ReleaseModelRouteProductionSlot(c)
-
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldStartAvailabilityRound(availabilityMode, availabilityRetry, relayInfo.HasSendResponse(), requestIsActive(c)) {
 			break
 		}
+		if !roundAttemptedUpstream && !waitForAvailabilityRetry(c) {
+			break
+		}
+		retryParam.ResetRound()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -267,6 +288,38 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 	c.Set("use_channel", useChannel)
+}
+
+const availabilityNoChannelRetryDelay = time.Second
+
+func shouldStartAvailabilityRound(enabled bool, retryableFailure bool, responseStarted bool, requestActive bool) bool {
+	return enabled && retryableFailure && !responseStarted && requestActive
+}
+
+func requestIsActive(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	select {
+	case <-c.Request.Context().Done():
+		return false
+	default:
+		return true
+	}
+}
+
+func waitForAvailabilityRetry(c *gin.Context) bool {
+	if !requestIsActive(c) {
+		return false
+	}
+	timer := time.NewTimer(availabilityNoChannelRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-c.Request.Context().Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
@@ -299,7 +352,7 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	if info.ChannelMeta == nil {
+	if info.ChannelMeta == nil && c.GetInt("channel_id") > 0 {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -663,7 +716,6 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	return true
 }
 
-
 // notifyModelRouteProduction feeds production outcomes into modelroute when model_priority is enabled.
 func notifyModelRouteProduction(c *gin.Context, channel *model.Channel, relayInfo *relaycommon.RelayInfo, success bool, statusCode int, streamInterrupted bool) {
 	if channel == nil || relayInfo == nil || !modelroute.IsModelPriorityMode() {
@@ -700,4 +752,3 @@ func notifyModelRouteProduction(c *gin.Context, channel *model.Channel, relayInf
 		Shadow:            shadow,
 	})
 }
-

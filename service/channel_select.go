@@ -50,6 +50,19 @@ func (p *RetryParam) ResetRetryNextTry() {
 	p.resetNextTry = true
 }
 
+func (p *RetryParam) ResetRound() {
+	p.SetRetry(0)
+	p.resetNextTry = false
+	if p.Ctx == nil {
+		return
+	}
+	p.Ctx.Set("use_channel", []string{})
+	common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroup, "")
+	common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroupIndex, 0)
+	common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroupRetryIndex, 0)
+	common.SetContextKey(p.Ctx, constant.ContextKeyModelRouteChain, nil)
+}
+
 // CacheGetRandomSatisfiedChannel tries to get a random channel that satisfies the requirements.
 // When routing_priority_mode=model_priority, selection uses modelroute try-list (PRD §10–§11).
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
@@ -331,7 +344,6 @@ func SelectModelPriorityChannel(param *RetryParam) (*model.Channel, string, erro
 func FormatModelRouteSelectDebug(channelID int, modelName string) string {
 	return fmt.Sprintf("channel=%d model=%s", channelID, modelName)
 }
-
 
 func releaseModelRouteSlot(c *gin.Context) {
 	if c == nil {

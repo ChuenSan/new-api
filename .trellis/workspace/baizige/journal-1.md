@@ -38,3 +38,19 @@
 ### Next Steps
 
 - None - task complete
+
+---
+
+## Session 2: 令牌级可用模式规划
+
+**Date**: 2026-07-17
+**Task**: 07-17-token-availability-mode
+**Branch**: `feat/model-route-shadow-probe`
+
+### Summary
+
+令牌级可用模式规划完成：失败即按现有算法再选路，不设次数上限；prd/design/implement + jsonl 已齐，待用户审后 start。
+
+### Status
+
+[WIP] Planning — awaiting review before task.py start
