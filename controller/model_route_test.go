@@ -23,8 +23,13 @@ type modelRouteMutationResponse struct {
 	Data    struct {
 		RequestedModel string                            `json:"requested_model"`
 		Changed        []model.ModelPolicyPriorityChange `json:"changed"`
-		Policies       []model.ChannelModelPolicy        `json:"policies"`
+		Policies       []modelRoutePolicyView            `json:"policies"`
 	} `json:"data"`
+}
+
+type modelRoutePolicyListResponse struct {
+	Success bool                   `json:"success"`
+	Data    []modelRoutePolicyView `json:"data"`
 }
 
 func setupModelRouteControllerTestDB(t *testing.T) *gorm.DB {
@@ -38,7 +43,7 @@ func setupModelRouteControllerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.ChannelModelPolicy{}, &model.User{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.ChannelModelPolicy{}, &model.User{}, &model.Log{}))
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -72,6 +77,50 @@ func seedControllerModelPolicies(t *testing.T, requestedModel string, priorities
 		})
 	}
 	require.NoError(t, model.UpsertChannelModelPolicies(policies))
+}
+
+func performModelRoutePolicyList(t *testing.T) (*httptest.ResponseRecorder, modelRoutePolicyListResponse) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/model_route/policies", nil)
+	ListModelRoutePolicies(ctx)
+
+	var response modelRoutePolicyListResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	return recorder, response
+}
+
+func seedControllerChannel(t *testing.T, id int, name string, status int) {
+	t.Helper()
+	require.NoError(t, model.DB.Create(&model.Channel{Id: id, Name: name, Status: status}).Error)
+}
+
+func TestListModelRoutePoliciesIncludesChannelStatus(t *testing.T) {
+	setupModelRouteControllerTestDB(t)
+	seedControllerChannel(t, 1, "enabled", common.ChannelStatusEnabled)
+	seedControllerChannel(t, 2, "manual", common.ChannelStatusManuallyDisabled)
+	seedControllerChannel(t, 3, "auto", common.ChannelStatusAutoDisabled)
+	seedControllerModelPolicies(t, "gpt-status", map[int64]int{1: 100, 2: 90, 3: 80, 4: 70})
+
+	recorder, response := performModelRoutePolicyList(t)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.True(t, response.Success)
+	require.Len(t, response.Data, 4)
+	byID := make(map[int64]modelRoutePolicyView, len(response.Data))
+	for _, policy := range response.Data {
+		byID[policy.ChannelID] = policy
+	}
+	assert.Equal(t, common.ChannelStatusEnabled, byID[1].ChannelStatus)
+	assert.True(t, byID[1].ChannelExists)
+	assert.Equal(t, "enabled", byID[1].ChannelName)
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, byID[2].ChannelStatus)
+	assert.True(t, byID[2].ChannelExists)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, byID[3].ChannelStatus)
+	assert.True(t, byID[3].ChannelExists)
+	assert.Equal(t, 0, byID[4].ChannelStatus)
+	assert.False(t, byID[4].ChannelExists)
 }
 
 func TestUpdateModelRoutePolicyPrioritySwapsAtomically(t *testing.T) {

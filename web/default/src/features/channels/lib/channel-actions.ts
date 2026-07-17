@@ -56,6 +56,11 @@ export const channelsQueryKeys = {
   detail: (id: number) => [...channelsQueryKeys.details(), id] as const,
 }
 
+function invalidateModelRouteQueries(queryClient?: QueryClient) {
+  queryClient?.invalidateQueries({ queryKey: ['model-route-policies'] })
+  queryClient?.invalidateQueries({ queryKey: ['model-route-metrics'] })
+}
+
 function getChannelTestResponseTime(
   response: ChannelTestResponse
 ): number | undefined {
@@ -127,6 +132,7 @@ export async function handleEnableChannel(
     if (response.success) {
       toast.success(i18next.t(SUCCESS_MESSAGES.ENABLED))
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.()
     } else {
       toast.error(response.message || i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
@@ -152,6 +158,7 @@ export async function handleDisableChannel(
     if (response.success) {
       toast.success(i18next.t(SUCCESS_MESSAGES.DISABLED))
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.()
     } else {
       toast.error(response.message || i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
@@ -190,6 +197,7 @@ export async function handleDeleteChannel(
     if (response.success) {
       toast.success(i18next.t(SUCCESS_MESSAGES.DELETED))
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.()
     } else {
       toast.error(response.message || i18next.t(ERROR_MESSAGES.DELETE_FAILED))
@@ -423,6 +431,7 @@ export async function handleBatchDelete(
         })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.(response.data || ids.length)
     } else {
       toast.error(response.message || i18next.t(ERROR_MESSAGES.DELETE_FAILED))
@@ -455,6 +464,7 @@ export async function handleBatchEnable(
         i18next.t('{{count}} channel(s) enabled', { count: successCount })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.()
     }
 
@@ -496,6 +506,7 @@ export async function handleBatchDisable(
         i18next.t('{{count}} channel(s) disabled', { count: successCount })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.()
     }
 
@@ -560,6 +571,7 @@ export async function handleEnableTagChannels(
         i18next.t('Enabled all channels with tag: {{tag}}', { tag })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.()
     } else {
       toast.error(
@@ -586,6 +598,7 @@ export async function handleDisableTagChannels(
         i18next.t('Disabled all channels with tag: {{tag}}', { tag })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.()
     } else {
       toast.error(
@@ -617,6 +630,7 @@ export async function handleDeleteAllDisabled(
         })
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      invalidateModelRouteQueries(queryClient)
       onSuccess?.(response.data || 0)
     } else {
       toast.error(

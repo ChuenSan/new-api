@@ -50,6 +50,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { NumericSpinnerInput } from '@/features/channels/components/numeric-spinner-input'
+import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { cn } from '@/lib/utils'
 
 import { movePolicyWithinGroup, suggestTopPriority } from '../lib/policy-order'
@@ -82,26 +83,102 @@ function normalizeExternalUrl(raw?: string) {
   return ''
 }
 
+function getPolicyChannelStatus(policy: ModelRoutePolicy) {
+  if (policy.channel_exists === false) {
+    return {
+      available: false,
+      className: '',
+      label: 'Channel not found',
+      variant: 'destructive' as const,
+    }
+  }
+
+  switch (policy.channel_status) {
+    case CHANNEL_STATUS.ENABLED:
+      return {
+        available: true,
+        className: '',
+        label: '',
+        variant: 'outline' as const,
+      }
+    case CHANNEL_STATUS.MANUAL_DISABLED:
+      return {
+        available: false,
+        className: '',
+        label: 'Channel manually disabled',
+        variant: 'destructive' as const,
+      }
+    case CHANNEL_STATUS.AUTO_DISABLED:
+      return {
+        available: false,
+        className: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
+        label: 'Channel automatically disabled',
+        variant: 'outline' as const,
+      }
+    case undefined:
+      return {
+        available: true,
+        className: '',
+        label: '',
+        variant: 'outline' as const,
+      }
+    default:
+      return {
+        available: false,
+        className: 'text-muted-foreground',
+        label: 'Channel unavailable',
+        variant: 'outline' as const,
+      }
+  }
+}
+
+function isPolicyRouteAvailable(policy: ModelRoutePolicy) {
+  return policy.enabled && getPolicyChannelStatus(policy).available
+}
+
 function PolicyChannelLink(props: { policy: ModelRoutePolicy }) {
+  const { t } = useTranslation()
+  const status = getPolicyChannelStatus(props.policy)
   const label = formatChannelLabel(props.policy)
   const href = normalizeExternalUrl(props.policy.base_url)
+  const title = status.label ? `${label} · ${t(status.label)}` : label
+  const linkClassName = cn(
+    'decoration-foreground/30 hover:decoration-foreground truncate font-medium underline decoration-1 underline-offset-4 transition-colors',
+    !status.available && 'text-muted-foreground'
+  )
   return (
     <div className='flex min-w-0 flex-col gap-0.5'>
-      {href ? (
-        <a
-          href={href}
-          target='_blank'
-          rel='noopener noreferrer'
-          className='decoration-foreground/30 hover:decoration-foreground truncate font-medium underline decoration-1 underline-offset-4 transition-colors'
-          title={href}
-        >
-          {label}
-        </a>
-      ) : (
-        <span className='truncate font-medium' title={label}>
-          {label}
-        </span>
-      )}
+      <div className='flex min-w-0 items-center gap-1.5'>
+        {href ? (
+          <a
+            href={href}
+            target='_blank'
+            rel='noopener noreferrer'
+            className={linkClassName}
+            title={href}
+          >
+            {label}
+          </a>
+        ) : (
+          <span
+            className={cn(
+              'truncate font-medium',
+              !status.available && 'text-muted-foreground'
+            )}
+            title={title}
+          >
+            {label}
+          </span>
+        )}
+        {status.label && (
+          <Badge
+            variant={status.variant}
+            className={cn('font-normal', status.className)}
+          >
+            {t(status.label)}
+          </Badge>
+        )}
+      </div>
       <span className='text-muted-foreground text-xs'>
         ID: {props.policy.channel_id}
       </span>
@@ -219,12 +296,15 @@ function SortablePolicyRow(props: {
     transition: sortable.transition,
   }
 
+  const status = getPolicyChannelStatus(props.policy)
+
   return (
     <tr
       ref={sortable.setNodeRef}
       style={style}
       className={cn(
         'hover:bg-muted/30 border-t transition-colors',
+        !status.available && 'opacity-60',
         sortable.isDragging && 'bg-muted/60 relative z-10 shadow-sm'
       )}
     >
@@ -266,7 +346,7 @@ function SortablePolicyRow(props: {
       </td>
       <td className='p-2.5'>
         <Badge variant={props.policy.enabled ? 'secondary' : 'outline'}>
-          {props.policy.enabled ? t('Yes') : t('No')}
+          {props.policy.enabled ? t('Policy enabled') : t('Policy disabled')}
         </Badge>
       </td>
       <td className='p-2.5'>
@@ -298,6 +378,8 @@ export function PolicySortableGroup(props: PolicySortableGroupProps) {
     props.onReorder(ordered, Number(event.active.id))
   }
 
+  const availableCount = props.policies.filter(isPolicyRouteAvailable).length
+
   return (
     <section className='overflow-hidden rounded-md border'>
       <div className='bg-muted/30 flex items-center justify-between border-b px-3 py-2'>
@@ -305,7 +387,10 @@ export function PolicySortableGroup(props: PolicySortableGroupProps) {
           {props.requestedModel}
         </h3>
         <span className='text-muted-foreground text-xs'>
-          {t('{{count}} routes', { count: props.policies.length })}
+          {t('{{available}}/{{count}} available', {
+            available: availableCount,
+            count: props.policies.length,
+          })}
         </span>
       </div>
       {props.dragDisabledReason && (
@@ -338,7 +423,7 @@ export function PolicySortableGroup(props: PolicySortableGroupProps) {
                     {t('Priority')}
                   </th>
                   <th className='text-muted-foreground p-2.5 font-medium'>
-                    {t('Enabled')}
+                    {t('Policy status')}
                   </th>
                   <th className='text-muted-foreground p-2.5 font-medium'>
                     {t('Source')}

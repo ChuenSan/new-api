@@ -16,6 +16,8 @@ type modelRoutePolicyView struct {
 	model.ChannelModelPolicy
 	ChannelName    string `json:"channel_name"`
 	BaseURL        string `json:"base_url"`
+	ChannelStatus  int    `json:"channel_status"`
+	ChannelExists  bool   `json:"channel_exists"`
 	EffectiveModel string `json:"effective_model"`
 }
 
@@ -154,6 +156,8 @@ func ListModelRoutePolicies(c *gin.Context) {
 			ChannelModelPolicy: rows[i],
 			ChannelName:        info.Name,
 			BaseURL:            info.BaseURL,
+			ChannelStatus:      info.Status,
+			ChannelExists:      info.Exists,
 			EffectiveModel:     resolvePolicyEffectiveModel(rows[i].RequestedModel, info.ModelMapping),
 		})
 	}
@@ -253,6 +257,8 @@ func buildModelRoutePolicyViews(rows []model.ChannelModelPolicy) []modelRoutePol
 			ChannelModelPolicy: rows[i],
 			ChannelName:        info.Name,
 			BaseURL:            info.BaseURL,
+			ChannelStatus:      info.Status,
+			ChannelExists:      info.Exists,
 			EffectiveModel:     resolvePolicyEffectiveModel(rows[i].RequestedModel, info.ModelMapping),
 		})
 	}
@@ -374,6 +380,8 @@ func ModelRouteMetricsAction(c *gin.Context) {
 type channelDisplayInfo struct {
 	Name         string
 	BaseURL      string
+	Status       int
+	Exists       bool
 	ModelMapping string
 }
 
@@ -409,6 +417,8 @@ func channelDisplayMap(ids []int64) map[int64]channelDisplayInfo {
 		out[int64(ch.Id)] = channelDisplayInfo{
 			Name:         ch.Name,
 			BaseURL:      ch.GetBaseURL(),
+			Status:       ch.Status,
+			Exists:       true,
 			ModelMapping: ch.GetModelMapping(),
 		}
 	}

@@ -20,6 +20,8 @@ export type ModelRoutePolicy = {
   channel_id: number
   channel_name?: string
   base_url?: string
+  channel_status?: number
+  channel_exists?: boolean
   requested_model: string
   effective_model?: string
   manual_priority: number
