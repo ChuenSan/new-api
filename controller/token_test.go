@@ -32,10 +32,11 @@ type tokenPageResponse struct {
 }
 
 type tokenResponseItem struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Key    string `json:"key"`
-	Status int    `json:"status"`
+	ID                int                 `json:"id"`
+	Name              string              `json:"name"`
+	Key               string              `json:"key"`
+	Status            int                 `json:"status"`
+	AllowedChannelIds model.ChannelIDList `json:"allowed_channel_ids"`
 }
 
 type tokenKeyResponse struct {
@@ -111,6 +112,9 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 	migrateTokenControllerTestDB(t, db)
 	if !db.Migrator().HasColumn(&model.Token{}, "availability_mode") {
 		t.Fatal("expected availability_mode column after migration")
+	}
+	if !db.Migrator().HasColumn(&model.Token{}, "allowed_channel_ids") {
+		t.Fatal("expected allowed_channel_ids column after migration")
 	}
 	return db
 }
@@ -542,6 +546,168 @@ func TestUpdateTokenPersistsAvailabilityMode(t *testing.T) {
 	}
 	if !updated.AvailabilityMode {
 		t.Fatal("expected availability mode to be persisted")
+	}
+}
+
+// TestAdminUpdateTokenPersistsNormalizedAllowedChannels guards administrator whitelist normalization.
+func TestAdminUpdateTokenPersistsNormalizedAllowedChannels(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	if err := db.AutoMigrate(&model.Channel{}); err != nil {
+		t.Fatalf("failed to migrate channel table: %v", err)
+	}
+	if err := db.Create(&model.Channel{Id: 12, Name: "enabled", Key: "channel-key", Status: common.ChannelStatusEnabled}).Error; err != nil {
+		t.Fatalf("failed to seed channel: %v", err)
+	}
+	token := seedToken(t, db, 1, "restricted-token", "restricted12345678")
+	body := map[string]any{
+		"id":                  token.Id,
+		"name":                token.Name,
+		"expired_time":        -1,
+		"unlimited_quota":     true,
+		"group":               "default",
+		"allowed_channel_ids": []int{12, 12},
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	ctx.Set("role", common.RoleAdminUser)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+	var detail tokenResponseItem
+	if err := common.Unmarshal(response.Data, &detail); err != nil {
+		t.Fatalf("failed to decode token response: %v", err)
+	}
+	if len(detail.AllowedChannelIds) != 1 || detail.AllowedChannelIds[0] != 12 {
+		t.Fatalf("expected normalized channel whitelist [12], got %v", detail.AllowedChannelIds)
+	}
+
+	var stored model.Token
+	if err := db.First(&stored, token.Id).Error; err != nil {
+		t.Fatalf("failed to reload token: %v", err)
+	}
+	if len(stored.AllowedChannelIds) != 1 || stored.AllowedChannelIds[0] != 12 {
+		t.Fatalf("expected stored channel whitelist [12], got %v", stored.AllowedChannelIds)
+	}
+}
+
+// TestUpdateTokenRejectsEmptyOrDisabledAllowedChannels guards invalid administrator policies.
+func TestUpdateTokenRejectsEmptyOrDisabledAllowedChannels(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	if err := db.AutoMigrate(&model.Channel{}); err != nil {
+		t.Fatalf("failed to migrate channel table: %v", err)
+	}
+	if err := db.Create(&model.Channel{Id: 18, Name: "disabled", Key: "channel-key", Status: common.ChannelStatusManuallyDisabled}).Error; err != nil {
+		t.Fatalf("failed to seed channel: %v", err)
+	}
+	token := seedToken(t, db, 1, "invalid-restriction", "invalid1234567890")
+
+	for _, ids := range [][]int{{}, {18}} {
+		body := map[string]any{
+			"id":                  token.Id,
+			"name":                token.Name,
+			"expired_time":        -1,
+			"unlimited_quota":     true,
+			"group":               "default",
+			"allowed_channel_ids": ids,
+		}
+		ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+		ctx.Set("role", common.RoleAdminUser)
+		UpdateToken(ctx)
+		if response := decodeAPIResponse(t, recorder); response.Success {
+			t.Fatalf("expected whitelist %v to be rejected", ids)
+		}
+	}
+}
+
+// TestNonAdminUpdatePreservesAndHidesAllowedChannels guards historical policy confidentiality and preservation.
+func TestNonAdminUpdatePreservesAndHidesAllowedChannels(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "preserved-restriction", "preserve123456789")
+	token.AllowedChannelIds = model.ChannelIDList{23}
+	if err := db.Model(token).Update("allowed_channel_ids", token.AllowedChannelIds).Error; err != nil {
+		t.Fatalf("failed to seed whitelist: %v", err)
+	}
+	body := map[string]any{
+		"id":              token.Id,
+		"name":            "updated-name",
+		"expired_time":    -1,
+		"unlimited_quota": true,
+		"group":           "default",
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	ctx.Set("role", common.RoleCommonUser)
+	UpdateToken(ctx)
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected non-admin update to succeed: %s", response.Message)
+	}
+	var detail tokenResponseItem
+	if err := common.Unmarshal(response.Data, &detail); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if detail.AllowedChannelIds != nil {
+		t.Fatalf("expected whitelist IDs to be hidden, got %v", detail.AllowedChannelIds)
+	}
+
+	var stored model.Token
+	if err := db.First(&stored, token.Id).Error; err != nil {
+		t.Fatalf("failed to reload token: %v", err)
+	}
+	if len(stored.AllowedChannelIds) != 1 || stored.AllowedChannelIds[0] != 23 {
+		t.Fatalf("expected stored whitelist to remain [23], got %v", stored.AllowedChannelIds)
+	}
+}
+
+// TestNonAdminCannotSetAllowedChannels guards administrator-only whitelist writes.
+func TestNonAdminCannotSetAllowedChannels(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "forbidden-restriction", "forbidden12345678")
+	body := map[string]any{
+		"id":                  token.Id,
+		"name":                token.Name,
+		"expired_time":        -1,
+		"unlimited_quota":     true,
+		"group":               "default",
+		"allowed_channel_ids": []int{12},
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	ctx.Set("role", common.RoleCommonUser)
+	UpdateToken(ctx)
+	if response := decodeAPIResponse(t, recorder); response.Success {
+		t.Fatal("expected non-admin whitelist write to be rejected")
+	}
+}
+
+// TestGetTokenAvailableChannelsReturnsEnabledSummariesOnly guards disabled-channel omission.
+func TestGetTokenAvailableChannelsReturnsEnabledSummariesOnly(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	if err := db.AutoMigrate(&model.Channel{}); err != nil {
+		t.Fatalf("failed to migrate channel table: %v", err)
+	}
+	channels := []model.Channel{
+		{Id: 12, Name: "enabled", Models: "gpt-4o", Key: "key-12", Status: common.ChannelStatusEnabled},
+		{Id: 18, Name: "disabled", Models: "gpt-4o", Key: "key-18", Status: common.ChannelStatusManuallyDisabled},
+	}
+	if err := db.Create(&channels).Error; err != nil {
+		t.Fatalf("failed to seed channels: %v", err)
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/available_channels", nil, 1)
+	ctx.Set("role", common.RoleAdminUser)
+	GetTokenAvailableChannels(ctx)
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response: %s", response.Message)
+	}
+	var summaries []model.EnabledChannelSummary
+	if err := common.Unmarshal(response.Data, &summaries); err != nil {
+		t.Fatalf("failed to decode summaries: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].Id != 12 || summaries[0].Name != "enabled" || summaries[0].Models != "gpt-4o" {
+		t.Fatalf("unexpected enabled-channel summaries: %+v", summaries)
 	}
 }
 

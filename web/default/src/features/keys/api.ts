@@ -25,7 +25,12 @@ import type {
   GetApiKeysResponse,
   SearchApiKeysParams,
   ApiKeyFormData,
+  GetAvailableChannelsResponse,
 } from './types'
+
+export const AVAILABLE_CHANNELS_QUERY_KEY = [
+  'token-available-channels',
+] as const
 
 // ============================================================================
 // API Key Management
@@ -57,6 +62,11 @@ export async function searchApiKeys(
 // Get single API key by ID
 export async function getApiKey(id: number): Promise<ApiResponse<ApiKey>> {
   const res = await api.get(`/api/token/${id}`)
+  return res.data
+}
+
+export async function getAvailableChannels(): Promise<GetAvailableChannelsResponse> {
+  const res = await api.get('/api/token/available_channels')
   return res.data
 }
 

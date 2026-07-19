@@ -1,6 +1,8 @@
 package model
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +12,32 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
+
+type ChannelIDList []int
+
+func (ids *ChannelIDList) Scan(value any) error {
+	if value == nil {
+		*ids = nil
+		return nil
+	}
+	var data []byte
+	switch v := value.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return fmt.Errorf("unsupported channel ID list type %T", value)
+	}
+	return json.Unmarshal(data, ids)
+}
+
+func (ids ChannelIDList) Value() (driver.Value, error) {
+	if ids == nil {
+		return nil, nil
+	}
+	return json.Marshal(ids)
+}
 
 type Token struct {
 	Id                 int            `json:"id"`
@@ -29,6 +57,7 @@ type Token struct {
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	AvailabilityMode   bool           `json:"availability_mode" gorm:"default:false"`
+	AllowedChannelIds  ChannelIDList  `json:"allowed_channel_ids" gorm:"type:text"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
@@ -303,7 +332,8 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "availability_mode").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "availability_mode",
+		"allowed_channel_ids").Updates(token).Error
 	return err
 }
 

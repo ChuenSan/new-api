@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/tooltip'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
-import { type ApiKey } from '../types'
+import { type ApiKey, type AvailableChannel } from '../types'
 import { useApiKeys } from './api-keys-provider'
 
 export function ApiKeyCell({ apiKey }: { apiKey: ApiKey }) {
@@ -189,6 +189,55 @@ export function ModelLimitsCell({ apiKey }: { apiKey: ApiKey }) {
           ))}
         </div>
       </TooltipContent>
+    </Tooltip>
+  )
+}
+
+export function ChannelWhitelistCell({
+  apiKey,
+  channels,
+}: {
+  apiKey: ApiKey
+  channels: AvailableChannel[]
+}) {
+  const { t } = useTranslation()
+
+  if (apiKey.allowed_channel_ids === null) {
+    return (
+      <StatusBadge
+        label={t('All channels')}
+        variant='neutral'
+        copyable={false}
+        className='-ml-1.5'
+      />
+    )
+  }
+
+  const allowed = new Set(apiKey.allowed_channel_ids)
+  const enabled = channels.filter((channel) => allowed.has(channel.id))
+  const label = enabled.length
+    ? t('{{count}} channel(s)', { count: enabled.length })
+    : t('No enabled channels')
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<BadgeCell />}>
+        <StatusBadge label={label} variant='neutral' copyable={false} />
+      </TooltipTrigger>
+      {enabled.length > 0 && (
+        <TooltipContent side='top' className='max-w-sm'>
+          <div className='flex max-h-[240px] flex-col gap-1 overflow-y-auto text-xs'>
+            {enabled.map((channel) => (
+              <div key={channel.id} className='flex gap-2'>
+                <span className='text-muted-foreground font-mono'>
+                  #{channel.id}
+                </span>
+                <span>{channel.name}</span>
+              </div>
+            ))}
+          </div>
+        </TooltipContent>
+      )}
     </Tooltip>
   )
 }

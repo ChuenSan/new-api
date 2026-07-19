@@ -42,9 +42,16 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { formatQuota } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getApiKeys, searchApiKeys } from '../api'
+import {
+  AVAILABLE_CHANNELS_QUERY_KEY,
+  getApiKeys,
+  getAvailableChannels,
+  searchApiKeys,
+} from '../api'
 import {
   API_KEY_STATUS,
   API_KEY_STATUS_OPTIONS,
@@ -52,7 +59,7 @@ import {
   ERROR_MESSAGES,
 } from '../constants'
 import { type ApiKey } from '../types'
-import { ApiKeyCell } from './api-keys-cells'
+import { ApiKeyCell, ChannelWhitelistCell } from './api-keys-cells'
 import { useApiKeysColumns } from './api-keys-columns'
 import { useApiKeys } from './api-keys-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
@@ -96,6 +103,15 @@ function ApiKeysMobileList({
   isLoading: boolean
 }) {
   const { t } = useTranslation()
+  const role = useAuthStore((state) => state.auth.user?.role) ?? ROLE.GUEST
+  const isAdmin = role >= ROLE.ADMIN
+  const { data: availableChannelsData } = useQuery({
+    queryKey: AVAILABLE_CHANNELS_QUERY_KEY,
+    queryFn: getAvailableChannels,
+    enabled: isAdmin,
+    staleTime: 30_000,
+  })
+  const availableChannels = availableChannelsData?.data || []
   const rows = table.getRowModel().rows
 
   if (isLoading) return <ApiKeysMobileSkeleton />
@@ -174,6 +190,15 @@ function ApiKeysMobileList({
                 </span>
               )}
             </div>
+            {isAdmin && (
+              <div className='flex items-center justify-between gap-2 text-xs'>
+                <span className='text-muted-foreground'>{t('Channels')}</span>
+                <ChannelWhitelistCell
+                  apiKey={apiKey}
+                  channels={availableChannels}
+                />
+              </div>
+            )}
           </div>
         )
       })}

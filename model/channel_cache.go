@@ -105,22 +105,24 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string, allowedChannelIds map[int]struct{}) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannel(group, model, retry, requestPath, allowedChannelIds)
 	}
 
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
+	channels := filterChannelsByAllowedIDs(group2model2channels[group][model], allowedChannelIds)
+	channels = filterChannelsByRequestPath(channels, requestPath)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
+		channels = filterChannelsByAllowedIDs(group2model2channels[group][normalizedModel], allowedChannelIds)
+		channels = filterChannelsByRequestPath(channels, requestPath)
 	}
 
 	if len(channels) == 0 {
@@ -200,6 +202,19 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+func filterChannelsByAllowedIDs(channels []int, allowed map[int]struct{}) []int {
+	if allowed == nil || len(channels) == 0 {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, id := range channels {
+		if _, ok := allowed[id]; ok {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
 }
 
 // filterChannelsByRequestPath restricts candidates by request path. Only Advanced

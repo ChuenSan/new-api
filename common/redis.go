@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -139,7 +140,15 @@ func RedisHSetObj(key string, obj interface{}, expiration time.Duration) error {
 			continue
 		}
 
-		// 其他类型直接转换为字符串
+		if value.Kind() == reflect.Slice || value.Kind() == reflect.Map {
+			encoded, err := json.Marshal(value.Interface())
+			if err != nil {
+				return fmt.Errorf("failed to encode field %s: %w", field.Name, err)
+			}
+			data[field.Name] = string(encoded)
+			continue
+		}
+
 		data[field.Name] = fmt.Sprintf("%v", value.Interface())
 	}
 
@@ -218,6 +227,10 @@ func RedisHGetObj(key string, obj interface{}) error {
 					return fmt.Errorf("failed to parse bool field %s: %w", fieldName, err)
 				}
 				fieldValue.SetBool(boolValue)
+			case reflect.Slice, reflect.Map:
+				if err := json.Unmarshal([]byte(value), fieldValue.Addr().Interface()); err != nil {
+					return fmt.Errorf("failed to decode field %s: %w", fieldName, err)
+				}
 			case reflect.Struct:
 				// Special handling for gorm.DeletedAt
 				if fieldValue.Type().String() == "gorm.DeletedAt" {

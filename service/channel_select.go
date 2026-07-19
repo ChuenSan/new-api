@@ -72,6 +72,30 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	return cacheGetChannelPriorityChannel(param)
 }
 
+func allowedChannelIDsForToken(c *gin.Context) map[int]struct{} {
+	if c == nil {
+		return nil
+	}
+	value, exists := common.GetContextKey(c, constant.ContextKeyTokenAllowedChannelIds)
+	if !exists {
+		return nil
+	}
+	allowed, ok := value.(map[int]struct{})
+	if !ok {
+		return map[int]struct{}{}
+	}
+	return allowed
+}
+
+func IsChannelAllowedForToken(c *gin.Context, channelID int) bool {
+	allowed := allowedChannelIDsForToken(c)
+	if allowed == nil {
+		return true
+	}
+	_, ok := allowed[channelID]
+	return ok
+}
+
 func cacheGetChannelPriorityChannel(param *RetryParam) (*model.Channel, string, error) {
 	var channel *model.Channel
 	var err error
@@ -101,7 +125,7 @@ func cacheGetChannelPriorityChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
+			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath, allowedChannelIDsForToken(param.Ctx))
 			if channel == nil {
 				logger.LogDebug(param.Ctx, "No available channel in group %s for model %s at priorityRetry %d, trying next group", autoGroup, param.ModelName, priorityRetry)
 				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i+1)
@@ -124,7 +148,7 @@ func cacheGetChannelPriorityChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
+		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, allowedChannelIDsForToken(param.Ctx))
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
@@ -154,6 +178,9 @@ func cacheGetModelPriorityChannel(param *RetryParam) (*model.Channel, string, er
 	used := usedChannelIDSet(param.Ctx)
 	for i, id := range chainIDs {
 		if used[id] {
+			continue
+		}
+		if !IsChannelAllowedForToken(param.Ctx, id) {
 			continue
 		}
 		ch, err := model.CacheGetChannel(id)
@@ -201,17 +228,25 @@ func tryEmergencyRecoveredChannel(param *RetryParam) (*model.Channel, string, bo
 	if param == nil || param.ModelName == "" || !modelroute.IsModelPriorityMode() {
 		return nil, "", false
 	}
+	used := usedChannelIDSet(param.Ctx)
+	exclude := make(map[int64]struct{}, len(used))
+	for id := range used {
+		exclude[int64(id)] = struct{}{}
+	}
 	// Prefer already-recovered candidate from a concurrent Leader.
 	if cand, ok := modelroute.GlobalEmergency.GetRecovered(param.ModelName); ok && cand.ChannelID > 0 {
 		if ch, g, ok2 := channelFromCandidate(param, cand); ok2 {
 			return ch, g, true
 		}
+		exclude[cand.ChannelID] = struct{}{}
 	}
 	// Live emergency: probe standby ranks when normal try-list is exhausted (PRD §28).
-	used := usedChannelIDSet(param.Ctx)
-	exclude := make(map[int64]struct{}, len(used))
-	for id := range used {
-		exclude[int64(id)] = struct{}{}
+	if allowed := allowedChannelIDsForToken(param.Ctx); allowed != nil {
+		candidates, err := modelroute.BuildAllCandidatesForRequestedModel(param.ModelName)
+		if err != nil {
+			return nil, "", false
+		}
+		excludeDisallowedEmergencyCandidates(exclude, candidates, allowed)
 	}
 	ctx := context.Background()
 	if param.Ctx != nil && param.Ctx.Request != nil {
@@ -224,9 +259,17 @@ func tryEmergencyRecoveredChannel(param *RetryParam) (*model.Channel, string, bo
 	return channelFromCandidate(param, cand)
 }
 
+func excludeDisallowedEmergencyCandidates(exclude map[int64]struct{}, candidates []model.ResolvedRouteCandidate, allowed map[int]struct{}) {
+	for _, candidate := range candidates {
+		if _, ok := allowed[int(candidate.ChannelID)]; !ok {
+			exclude[candidate.ChannelID] = struct{}{}
+		}
+	}
+}
+
 func channelFromCandidate(param *RetryParam, cand model.ResolvedRouteCandidate) (*model.Channel, string, bool) {
 	id := int(cand.ChannelID)
-	if id <= 0 || usedChannelIDSet(param.Ctx)[id] {
+	if id <= 0 || usedChannelIDSet(param.Ctx)[id] || !IsChannelAllowedForToken(param.Ctx, id) {
 		return nil, "", false
 	}
 	ch, err := model.CacheGetChannel(id)
@@ -266,6 +309,9 @@ func ensureModelRouteChain(param *RetryParam) ([]int, []string, error) {
 	for _, c := range tryList {
 		id := int(c.ChannelID)
 		if id <= 0 {
+			continue
+		}
+		if !IsChannelAllowedForToken(param.Ctx, id) {
 			continue
 		}
 		g, ok := matchChannelGroup(id, param.ModelName, groups)

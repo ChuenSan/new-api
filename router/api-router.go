@@ -243,6 +243,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		registerChannelRoutes(apiRouter)
 		registerAuthzRoutes(apiRouter)
+		apiRouter.GET("/token/available_channels", middleware.AdminAuth(), controller.GetTokenAvailableChannels)
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		{

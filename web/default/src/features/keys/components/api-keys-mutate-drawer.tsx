@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, KeyRound, Settings2, WalletCards } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -65,9 +65,17 @@ import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { createApiKey, updateApiKey, getApiKey } from '../api'
+import {
+  AVAILABLE_CHANNELS_QUERY_KEY,
+  createApiKey,
+  getApiKey,
+  getAvailableChannels,
+  updateApiKey,
+} from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   getApiKeyFormSchema,
@@ -77,6 +85,7 @@ import {
   transformApiKeyToFormDefaults,
 } from '../lib'
 import type { ApiKey } from '../types'
+import { ApiKeyChannelSelector } from './api-key-channel-selector'
 import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
@@ -98,6 +107,8 @@ export function ApiKeysMutateDrawer({
   const isUpdate = !!currentRow
   const { triggerRefresh } = useApiKeys()
   const { status } = useStatus()
+  const role = useAuthStore((state) => state.auth.user?.role) ?? ROLE.GUEST
+  const isAdmin = role >= ROLE.ADMIN
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const defaultUseAutoGroup = status?.default_use_auto_group === true
@@ -111,45 +122,110 @@ export function ApiKeysMutateDrawer({
   })
 
   // Fetch groups
-  const { data: groupsData } = useQuery({
+  const groupsQuery = useQuery({
     queryKey: ['user-groups'],
     queryFn: getUserGroups,
     enabled: open,
     staleTime: 0,
   })
 
+  const { data: apiKeyData } = useQuery({
+    queryKey: ['api-key', currentRow?.id],
+    queryFn: () => getApiKey(currentRow?.id ?? 0),
+    enabled: open && isUpdate && !!currentRow,
+    staleTime: 0,
+  })
+
+  const availableChannelsQuery = useQuery({
+    queryKey: AVAILABLE_CHANNELS_QUERY_KEY,
+    queryFn: getAvailableChannels,
+    enabled: open && isAdmin,
+    staleTime: 30_000,
+  })
+
   const models = modelsData?.data || []
-  const groupsRaw = groupsData?.data || {}
-  const groups: ApiKeyGroupOption[] = Object.entries(groupsRaw).map(
-    ([key, info]) => ({
-      value: key,
-      label: key,
-      desc: info.desc || key,
-      ratio: info.ratio,
-    })
+  const availableChannels = availableChannelsQuery.data?.data || []
+  const groups = useMemo<ApiKeyGroupOption[]>(
+    () =>
+      Object.entries(groupsQuery.data?.data ?? {}).map(([key, info]) => ({
+        value: key,
+        label: key,
+        desc: info.desc || key,
+        ratio: info.ratio,
+      })),
+    [groupsQuery.data?.data]
   )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
-  const schema = getApiKeyFormSchema(t)
+  const schema = useMemo(() => getApiKeyFormSchema(t), [t])
 
   const form = useForm<ApiKeyFormValues>({
     resolver: zodResolver(schema),
     defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
   })
+  const initializedFormRef = useRef<string | null>(null)
+  const formInitializationKey = `${isUpdate ? `update:${currentRow?.id}` : 'create'}:${isAdmin}`
 
   // Load existing data when updating
   useEffect(() => {
-    if (open && isUpdate && currentRow) {
-      getApiKey(currentRow.id).then((result) => {
-        if (result.success && result.data) {
-          form.reset(transformApiKeyToFormDefaults(result.data))
-        }
-      })
-    } else if (open && !isUpdate) {
+    if (!open) {
+      initializedFormRef.current = null
+      return
+    }
+    if (initializedFormRef.current === formInitializationKey) return
+    if (isUpdate && currentRow) {
+      if (!apiKeyData?.success || !apiKeyData.data) return
+      if (isAdmin && availableChannelsQuery.isPending) return
+      const enabledChannelIds =
+        isAdmin && availableChannelsQuery.isSuccess
+          ? new Set(
+              (availableChannelsQuery.data?.data ?? []).map(
+                (channel) => channel.id
+              )
+            )
+          : undefined
+      form.reset(
+        transformApiKeyToFormDefaults(apiKeyData.data, enabledChannelIds)
+      )
+    } else if (!isUpdate) {
+      if (groupsQuery.isPending) return
       form.reset(
         getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
       )
     }
-  }, [open, isUpdate, currentRow, form, defaultUseAutoGroup, backendHasAuto])
+    initializedFormRef.current = formInitializationKey
+  }, [
+    open,
+    isUpdate,
+    currentRow,
+    apiKeyData,
+    isAdmin,
+    availableChannelsQuery.isPending,
+    availableChannelsQuery.isSuccess,
+    availableChannelsQuery.data,
+    form,
+    formInitializationKey,
+    defaultUseAutoGroup,
+    backendHasAuto,
+    groupsQuery.isPending,
+  ])
+
+  useEffect(() => {
+    if (!open || !isAdmin || !availableChannelsQuery.isSuccess) return
+    const enabledChannelIds = new Set(
+      (availableChannelsQuery.data?.data ?? []).map((channel) => channel.id)
+    )
+    const selected = form.getValues('allowed_channel_ids')
+    const filtered = selected.filter((id) => enabledChannelIds.has(id))
+    if (filtered.length !== selected.length) {
+      form.setValue('allowed_channel_ids', filtered, { shouldValidate: true })
+    }
+  }, [
+    open,
+    isAdmin,
+    availableChannelsQuery.isSuccess,
+    availableChannelsQuery.data,
+    form,
+  ])
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
@@ -249,6 +325,11 @@ export function ApiKeysMutateDrawer({
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
   const selectedGroup = form.watch('group')
   const unlimitedQuota = form.watch('unlimited_quota')
+  const channelAccessMode = form.watch('channel_access_mode')
+  const channelOptionsUnavailable =
+    isAdmin &&
+    channelAccessMode === 'specific' &&
+    (availableChannelsQuery.isPending || availableChannelsQuery.isError)
 
   return (
     <Sheet
@@ -256,6 +337,7 @@ export function ApiKeysMutateDrawer({
       onOpenChange={(v) => {
         onOpenChange(v)
         if (!v) {
+          initializedFormRef.current = null
           form.reset()
         }
       }}
@@ -545,6 +627,39 @@ export function ApiKeysMutateDrawer({
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className='flex flex-col gap-4 pt-2'>
+                    {isAdmin && (
+                      <FormField
+                        control={form.control}
+                        name='allowed_channel_ids'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('Available channels')}</FormLabel>
+                            <FormControl>
+                              <ApiKeyChannelSelector
+                                mode={channelAccessMode}
+                                selected={field.value}
+                                channels={availableChannels}
+                                isLoading={availableChannelsQuery.isPending}
+                                isError={availableChannelsQuery.isError}
+                                onModeChange={(mode) => {
+                                  form.setValue('channel_access_mode', mode, {
+                                    shouldValidate: true,
+                                  })
+                                }}
+                                onSelectedChange={(ids) => field.onChange(ids)}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'Limit this API key to selected enabled channels'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
                     <FormField
                       control={form.control}
                       name='model_limits'
@@ -614,7 +729,7 @@ export function ApiKeysMutateDrawer({
           <Button
             type='button'
             onClick={form.handleSubmit(onSubmit, onInvalid)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || channelOptionsUnavailable}
             className='w-full sm:w-auto'
           >
             {isSubmitting ? t('Saving...') : t('Save changes')}

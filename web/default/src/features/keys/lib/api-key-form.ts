@@ -40,14 +40,13 @@ export function getApiKeyFormSchema(t: TFunction) {
       group: z.string().optional(),
       cross_group_retry: z.boolean().optional(),
       availability_mode: z.boolean().optional(),
+      channel_access_mode: z.enum(['all', 'specific']),
+      allowed_channel_ids: z.array(z.number().int().positive()),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
       if (data.unlimited_quota) {
-        return
-      }
-
-      if (
+      } else if (
         data.remain_quota_dollars === undefined ||
         data.remain_quota_dollars < 0
       ) {
@@ -55,6 +54,17 @@ export function getApiKeyFormSchema(t: TFunction) {
           code: 'custom',
           path: ['remain_quota_dollars'],
           message: t('Quota must be zero or greater'),
+        })
+      }
+
+      if (
+        data.channel_access_mode === 'specific' &&
+        data.allowed_channel_ids.length === 0
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['allowed_channel_ids'],
+          message: t('Select at least one channel'),
         })
       }
     })
@@ -76,6 +86,8 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   group: DEFAULT_GROUP,
   cross_group_retry: true,
   availability_mode: false,
+  channel_access_mode: 'all',
+  allowed_channel_ids: [],
   tokenCount: 1,
 }
 
@@ -87,6 +99,8 @@ export function getApiKeyFormDefaultValues(
     group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
     cross_group_retry: defaultUseAutoGroup,
     availability_mode: false,
+    channel_access_mode: 'all',
+    allowed_channel_ids: [],
   }
 }
 
@@ -115,6 +129,10 @@ export function transformFormDataToPayload(
     group: data.group || '',
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
     availability_mode: !!data.availability_mode,
+    allowed_channel_ids:
+      data.channel_access_mode === 'specific'
+        ? [...new Set(data.allowed_channel_ids)].sort((a, b) => a - b)
+        : null,
   }
 }
 
@@ -122,8 +140,12 @@ export function transformFormDataToPayload(
  * Transform API key data to form defaults
  */
 export function transformApiKeyToFormDefaults(
-  apiKey: ApiKey
+  apiKey: ApiKey,
+  enabledChannelIds?: ReadonlySet<number>
 ): ApiKeyFormValues {
+  const allowedChannelIds = (apiKey.allowed_channel_ids ?? []).filter(
+    (id) => enabledChannelIds === undefined || enabledChannelIds.has(id)
+  )
   return {
     name: apiKey.name,
     remain_quota_dollars: apiKey.unlimited_quota
@@ -141,6 +163,9 @@ export function transformApiKeyToFormDefaults(
     group: apiKey.group || DEFAULT_GROUP,
     cross_group_retry: !!apiKey.cross_group_retry,
     availability_mode: !!apiKey.availability_mode,
+    channel_access_mode:
+      apiKey.allowed_channel_ids === null ? 'all' : 'specific',
+    allowed_channel_ids: allowedChannelIds,
     tokenCount: 1,
   }
 }

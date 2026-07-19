@@ -59,6 +59,12 @@ type Channel struct {
 	Keys []string `json:"-" gorm:"-"`
 }
 
+type EnabledChannelSummary struct {
+	Id     int    `json:"id"`
+	Name   string `json:"name"`
+	Models string `json:"models"`
+}
+
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
 	MultiKeySize           int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
@@ -421,6 +427,34 @@ func GetChannelById(id int, selectAll bool) (*Channel, error) {
 		return nil, err
 	}
 	return channel, nil
+}
+
+func GetEnabledChannelSummaries() ([]EnabledChannelSummary, error) {
+	var channels []EnabledChannelSummary
+	err := DB.Model(&Channel{}).
+		Select("id", "name", "models").
+		Where("status = ?", common.ChannelStatusEnabled).
+		Order("id ASC").
+		Find(&channels).Error
+	return channels, err
+}
+
+func GetEnabledChannelIDSet(ids []int) (map[int]struct{}, error) {
+	enabled := make(map[int]struct{}, len(ids))
+	if len(ids) == 0 {
+		return enabled, nil
+	}
+	var rows []int
+	err := DB.Model(&Channel{}).
+		Where("id IN ? AND status = ?", ids, common.ChannelStatusEnabled).
+		Pluck("id", &rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range rows {
+		enabled[id] = struct{}{}
+	}
+	return enabled, nil
 }
 
 func BatchInsertChannels(channels []Channel) error {

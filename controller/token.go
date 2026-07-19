@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -14,21 +15,79 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func buildMaskedTokenResponse(token *model.Token) *model.Token {
+func buildMaskedTokenResponse(token *model.Token, includeAllowedChannels bool) *model.Token {
 	if token == nil {
 		return nil
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	if !includeAllowedChannels {
+		maskedToken.AllowedChannelIds = nil
+	}
 	return &maskedToken
 }
 
-func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
+func buildMaskedTokenResponses(tokens []*model.Token, includeAllowedChannels bool) []*model.Token {
 	maskedTokens := make([]*model.Token, 0, len(tokens))
 	for _, token := range tokens {
-		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
+		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token, includeAllowedChannels))
 	}
 	return maskedTokens
+}
+
+func isTokenChannelAdmin(c *gin.Context) bool {
+	return c.GetInt("role") >= common.RoleAdminUser
+}
+
+func normalizeAllowedChannelIds(ids model.ChannelIDList) (model.ChannelIDList, bool, error) {
+	if ids == nil {
+		return nil, true, nil
+	}
+	if len(ids) == 0 {
+		return nil, false, nil
+	}
+	seen := make(map[int]struct{}, len(ids))
+	normalized := make(model.ChannelIDList, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, false, nil
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	sort.Ints(normalized)
+	enabled, err := model.GetEnabledChannelIDSet(normalized)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(enabled) != len(normalized) {
+		return nil, false, nil
+	}
+	return normalized, true, nil
+}
+
+func validateTokenAllowedChannels(c *gin.Context, token *model.Token) bool {
+	if token.AllowedChannelIds != nil && !isTokenChannelAdmin(c) {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		return false
+	}
+	if !isTokenChannelAdmin(c) {
+		return true
+	}
+	normalized, valid, err := normalizeAllowedChannelIds(token.AllowedChannelIds)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	if !valid {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return false
+	}
+	token.AllowedChannelIds = normalized
+	return true
 }
 
 func GetAllTokens(c *gin.Context) {
@@ -41,7 +100,7 @@ func GetAllTokens(c *gin.Context) {
 	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(buildMaskedTokenResponses(tokens, isTokenChannelAdmin(c)))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -58,7 +117,7 @@ func SearchTokens(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(buildMaskedTokenResponses(tokens, isTokenChannelAdmin(c)))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -74,7 +133,16 @@ func GetToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+	common.ApiSuccess(c, buildMaskedTokenResponse(token, isTokenChannelAdmin(c)))
+}
+
+func GetTokenAvailableChannels(c *gin.Context) {
+	channels, err := model.GetEnabledChannelSummaries()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, channels)
 }
 
 func GetTokenKey(c *gin.Context) {
@@ -175,6 +243,9 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
 	}
+	if !validateTokenAllowedChannels(c, &token) {
+		return
+	}
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
@@ -222,6 +293,7 @@ func AddToken(c *gin.Context) {
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AvailabilityMode:   token.AvailabilityMode,
+		AllowedChannelIds:  token.AllowedChannelIds,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -290,6 +362,9 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
+		if !validateTokenAllowedChannels(c, &token) {
+			return
+		}
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
@@ -301,6 +376,9 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 		cleanToken.AvailabilityMode = token.AvailabilityMode
+		if isTokenChannelAdmin(c) {
+			cleanToken.AllowedChannelIds = token.AllowedChannelIds
+		}
 	}
 	err = cleanToken.Update()
 	if err != nil {
@@ -310,7 +388,7 @@ func UpdateToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    buildMaskedTokenResponse(cleanToken),
+		"data":    buildMaskedTokenResponse(cleanToken, isTokenChannelAdmin(c)),
 	})
 }
 

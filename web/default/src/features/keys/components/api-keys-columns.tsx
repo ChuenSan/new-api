@@ -32,14 +32,18 @@ import {
 } from '@/components/ui/tooltip'
 import { getUserGroups } from '@/lib/api'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
+import { AVAILABLE_CHANNELS_QUERY_KEY, getAvailableChannels } from '../api'
 import { API_KEY_STATUSES } from '../constants'
 import { type ApiKey } from '../types'
 import {
   ApiKeyCell,
-  ModelLimitsCell,
+  ChannelWhitelistCell,
   IpRestrictionsCell,
+  ModelLimitsCell,
 } from './api-keys-cells'
 import { DataTableRowActions } from './data-table-row-actions'
 
@@ -72,6 +76,15 @@ function useGroupRatios(): Record<string, number> {
 export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
   const { t } = useTranslation()
   const groupRatios = useGroupRatios()
+  const role = useAuthStore((state) => state.auth.user?.role) ?? ROLE.GUEST
+  const isAdmin = role >= ROLE.ADMIN
+  const { data: availableChannelsData } = useQuery({
+    queryKey: AVAILABLE_CHANNELS_QUERY_KEY,
+    queryFn: getAvailableChannels,
+    enabled: isAdmin,
+    staleTime: 30_000,
+  })
+  const availableChannels = availableChannelsData?.data || []
   return [
     {
       id: 'select',
@@ -244,6 +257,24 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
       size: 160,
       meta: { mobileHidden: true },
     },
+    ...(isAdmin
+      ? [
+          {
+            id: 'allowed_channel_ids',
+            accessorKey: 'allowed_channel_ids',
+            header: t('Channels'),
+            cell: ({ row }) => (
+              <ChannelWhitelistCell
+                apiKey={row.original}
+                channels={availableChannels}
+              />
+            ),
+            enableSorting: false,
+            size: 160,
+            meta: { mobileHidden: true },
+          } satisfies ColumnDef<ApiKey>,
+        ]
+      : []),
     {
       id: 'allow_ips',
       accessorKey: 'allow_ips',

@@ -465,6 +465,13 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
 	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, token.CrossGroupRetry)
 	common.SetContextKey(c, constant.ContextKeyTokenAvailabilityMode, token.AvailabilityMode)
+	if token.AllowedChannelIds != nil {
+		allowed := make(map[int]struct{}, len(token.AllowedChannelIds))
+		for _, id := range token.AllowedChannelIds {
+			allowed[id] = struct{}{}
+		}
+		common.SetContextKey(c, constant.ContextKeyTokenAllowedChannelIds, allowed)
+	}
 	if len(parts) > 1 {
 		if model.IsAdmin(token.UserId) {
 			c.Set("specific_channel_id", parts[1])
