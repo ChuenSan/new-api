@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Command,
@@ -65,12 +66,20 @@ export function ApiKeyChannelSelector({
 }: ApiKeyChannelSelectorProps) {
   const { t } = useTranslation()
   const selectedSet = new Set(selected)
+  const allSelected =
+    channels.length > 0 &&
+    channels.every((channel) => selectedSet.has(channel.id))
 
   const toggleChannel = (id: number) => {
     const next = new Set(selected)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     onSelectedChange([...next].sort((a, b) => a - b))
+  }
+
+  const selectAllChannels = () => {
+    const ids = channels.map((channel) => channel.id).sort((a, b) => a - b)
+    onSelectedChange(ids)
   }
 
   return (
@@ -118,6 +127,31 @@ export function ApiKeyChannelSelector({
           )}
           {!isLoading && !isError && (
             <Command>
+              <div className='flex items-center justify-between gap-3 border-b px-3 py-2'>
+                <span className='text-muted-foreground text-xs'>
+                  {t('{{count}} selected', { count: selected.length })}
+                </span>
+                <div className='flex items-center gap-1'>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='xs'
+                    disabled={channels.length === 0 || allSelected}
+                    onClick={selectAllChannels}
+                  >
+                    {t('Select all')}
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='xs'
+                    disabled={selected.length === 0}
+                    onClick={() => onSelectedChange([])}
+                  >
+                    {t('Clear selection')}
+                  </Button>
+                </div>
+              </div>
               <CommandInput placeholder={t('Search channels...')} />
               <CommandList className='max-h-64'>
                 <CommandEmpty>{t('No enabled channels found')}</CommandEmpty>
