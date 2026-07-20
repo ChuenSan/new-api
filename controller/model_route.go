@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/modelroute"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type modelRoutePolicyView struct {
@@ -337,14 +339,35 @@ func ListModelRouteMetrics(c *gin.Context) {
 type metricsActionRequest struct {
 	ChannelID      int64  `json:"channel_id"`
 	EffectiveModel string `json:"effective_model"`
-	Action         string `json:"action"` // trip_open | force_probe | manual_disable | restore_auto
+	Action         string `json:"action"` // trip_open | force_probe | manual_disable | restore_auto | reset_unknown
 }
 
 // ModelRouteMetricsAction POST /api/model_route/metrics/action (PRD §34 ops).
 func ModelRouteMetricsAction(c *gin.Context) {
 	var req metricsActionRequest
-	if err := common.DecodeJson(c.Request.Body, &req); err != nil || req.ChannelID == 0 || req.EffectiveModel == "" {
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "channel_id, effective_model, action required"})
+		return
+	}
+	req.EffectiveModel = strings.TrimSpace(req.EffectiveModel)
+	if req.ChannelID <= 0 || req.EffectiveModel == "" || req.Action == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "channel_id, effective_model, action required"})
+		return
+	}
+	if req.Action == "reset_unknown" {
+		requestedModels, err := requestedModelsForMetricsAction(req.ChannelID, req.EffectiveModel)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := modelroute.ResetRouteToUnknown(req.ChannelID, req.EffectiveModel, requestedModels); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		recordManageAudit(c, "model_route.metrics_action", map[string]interface{}{
+			"channel_id": req.ChannelID, "effective_model": req.EffectiveModel, "action": req.Action,
+		})
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 		return
 	}
 	var ev modelroute.TransitionEvent
@@ -375,6 +398,35 @@ func ModelRouteMetricsAction(c *gin.Context) {
 		"channel_id": req.ChannelID, "effective_model": req.EffectiveModel, "action": req.Action,
 	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+}
+
+func requestedModelsForMetricsAction(channelID int64, effectiveModel string) ([]string, error) {
+	channel, err := model.GetChannelById(int(channelID), true)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	policies, err := model.ListChannelModelPoliciesByChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(policies))
+	requestedModels := make([]string, 0, len(policies))
+	for i := range policies {
+		requestedModel := strings.TrimSpace(policies[i].RequestedModel)
+		if requestedModel == "" || resolvePolicyEffectiveModel(requestedModel, channel.GetModelMapping()) != effectiveModel {
+			continue
+		}
+		if _, ok := seen[requestedModel]; ok {
+			continue
+		}
+		seen[requestedModel] = struct{}{}
+		requestedModels = append(requestedModels, requestedModel)
+	}
+	sort.Strings(requestedModels)
+	return requestedModels, nil
 }
 
 type channelDisplayInfo struct {

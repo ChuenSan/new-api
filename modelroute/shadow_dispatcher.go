@@ -26,7 +26,7 @@ type ShadowResult struct {
 // ShadowTransportTracker tracks consecutive transport failures across distinct production requests (PRD §14).
 // OPEN on standby only after ≥3 transport fails from ≥2 different real requests.
 type ShadowTransportTracker struct {
-	mu       sync.Mutex
+	mu sync.Mutex
 	// key → ordered unique production request ids that failed transport
 	fails map[string][]string
 }
@@ -156,6 +156,9 @@ func (d *ShadowDispatcher) MaybeDispatchShadowProbeAsync(
 }
 
 func (d *ShadowDispatcher) applyShadowResult(item model.ProbeQueueItem, res ShadowResult) {
+	lock := metricsLockFor(item.MetricsKey)
+	lock.Lock()
+	defer lock.Unlock()
 	m := GlobalMetricsRuntime.Get(item.MetricsKey)
 	if m == nil {
 		var err error
@@ -163,6 +166,7 @@ func (d *ShadowDispatcher) applyShadowResult(item model.ProbeQueueItem, res Shad
 		if err != nil || m == nil {
 			return
 		}
+		GlobalMetricsRuntime.Put(m)
 	}
 	ts := now().Unix()
 	m.LastProbeAt = &ts
@@ -174,7 +178,7 @@ func (d *ShadowDispatcher) applyShadowResult(item model.ProbeQueueItem, res Shad
 			ms := float64(res.TTFT.Milliseconds())
 			m.ShadowTTFTEMAMs = emaUpdate(m.ShadowTTFTEMAMs, ms, model.DefaultTTFTEMAAlpha)
 		}
-		ApplyTransition(m, EventProbeSuccess, 0)
+		applyTransitionLocked(m, EventProbeSuccess, 0)
 		// re-enqueue recovering for further probes handled by state machine callers
 		return
 	}
@@ -186,7 +190,7 @@ func (d *ShadowDispatcher) applyShadowResult(item model.ProbeQueueItem, res Shad
 			// only OPEN standby when threshold met
 			if AllowsOpenOnShadowTransport(consec, distinct) {
 				m.SetLastErrorClass(model.ErrorTemporary)
-				ApplyTransition(m, EventTripOpen, 0)
+				applyTransitionLocked(m, EventTripOpen, 0)
 			} else if m.State() == model.RouteProbing {
 				// stay probing; schedule next
 				item.NextProbeAt = now().Add(time.Duration(model.DefaultOpenBackoffSeconds[minInt(m.BackoffLevel, len(model.DefaultOpenBackoffSeconds)-1)]) * time.Second)

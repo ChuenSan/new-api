@@ -20,7 +20,7 @@ import { api } from '@/lib/api'
 
 import type {
   MetricsActionRequest,
-  ModelRouteMetrics,
+  ModelRouteMetricsResponse,
   ModelRoutePolicy,
   ModelPolicyPriorityMutationResponse,
   ReorderModelRoutePoliciesRequest,
@@ -52,7 +52,7 @@ export async function reorderModelRoutePolicies(
 
 export async function listModelRouteMetrics(params?: {
   channel_id?: number
-}): Promise<{ success: boolean; message: string; data: ModelRouteMetrics[] }> {
+}): Promise<ModelRouteMetricsResponse> {
   const res = await api.get('/api/model_route/metrics', { params })
   return res.data
 }
@@ -61,6 +61,16 @@ export async function modelRouteMetricsAction(
   data: MetricsActionRequest
 ): Promise<{ success: boolean; message: string }> {
   const res = await api.post('/api/model_route/metrics/action', data)
+  return res.data
+}
+
+export async function resetModelRouteMetricsUnknown(
+  data: MetricsActionRequest & { action: 'reset_unknown' }
+): Promise<{ success: boolean; message: string }> {
+  const res = await api.post('/api/model_route/metrics/action', data, {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  })
   return res.data
 }
 

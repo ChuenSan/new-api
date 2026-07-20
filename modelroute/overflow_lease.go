@@ -236,6 +236,24 @@ func (s *LeaseStore) ClearLease(requestedModel string) {
 	}
 }
 
+func (s *LeaseStore) ClearLeaseIfMetricsKey(requestedModel string, target model.MetricsKey) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lease := s.leases[requestedModel]
+	if lease == nil {
+		return false
+	}
+	mk := MakeMetricsKey(lease.Candidate.ChannelID, lease.Candidate.EffectiveModel)
+	if mk != target {
+		return false
+	}
+	if GlobalRoles.Get(mk) == model.RoleOverflow {
+		GlobalRoles.Set(mk, model.RoleNone)
+	}
+	delete(s.leases, requestedModel)
+	return true
+}
+
 // ClearAll drops all leases (tests).
 func (s *LeaseStore) ClearAll() {
 	s.mu.Lock()

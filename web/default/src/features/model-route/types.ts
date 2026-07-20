@@ -45,7 +45,9 @@ export type ModelRouteMetrics = {
   production_ttft_ema_ms?: number | null
   rate_limit_ema?: number | null
   stream_interruption_ema?: number | null
+  backoff_level?: number
   cooldown_until?: number | null
+  last_error_class?: string
   last_success_at?: number | null
   last_probe_at?: number | null
   last_request_at?: number | null
@@ -92,7 +94,18 @@ export type ReorderModelRoutePoliciesRequest = {
 export type MetricsActionRequest = {
   channel_id: number
   effective_model: string
-  action: 'trip_open' | 'force_probe' | 'manual_disable' | 'restore_auto'
+  action:
+    | 'trip_open'
+    | 'force_probe'
+    | 'manual_disable'
+    | 'restore_auto'
+    | 'reset_unknown'
+}
+
+export type ModelRouteMetricsResponse = {
+  success: boolean
+  message: string
+  data: ModelRouteMetrics[]
 }
 
 export type ResetLearningRequest = {

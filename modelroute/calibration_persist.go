@@ -36,6 +36,15 @@ func (p *CalibrationPersister) MarkDirty(mk model.MetricsKey) {
 	p.dirty[mk.String()] = struct{}{}
 }
 
+func (p *CalibrationPersister) ClearDirty(mk model.MetricsKey) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.dirty, mk.String())
+}
+
 // SnapshotNow flushes all dirty (or all runtime) metrics to DB (PRD §17 critical / exit).
 func (p *CalibrationPersister) SnapshotNow() (int, error) {
 	if p == nil {
@@ -50,31 +59,47 @@ func (p *CalibrationPersister) SnapshotNow() (int, error) {
 	p.lastSnap = now()
 	p.mu.Unlock()
 
-	// also include all runtime entries if dirty empty but force full — flush runtime map
-	var rows []model.ChannelModelMetrics
+	var candidates []*model.ChannelModelMetrics
 	GlobalMetricsRuntime.mu.RLock()
 	if len(keys) == 0 {
 		for _, m := range GlobalMetricsRuntime.data {
 			if m != nil {
-				rows = append(rows, *m)
+				candidates = append(candidates, m)
 			}
 		}
 	} else {
 		for _, k := range keys {
 			if m, ok := GlobalMetricsRuntime.data[k]; ok && m != nil {
-				rows = append(rows, *m)
+				candidates = append(candidates, m)
 			}
 		}
 	}
 	GlobalMetricsRuntime.mu.RUnlock()
 
-	if len(rows) == 0 {
-		return 0, nil
+	count := 0
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		mk := candidate.MetricsKey()
+		if _, ok := seen[mk.String()]; ok {
+			continue
+		}
+		seen[mk.String()] = struct{}{}
+		lock := metricsLockFor(mk)
+		lock.Lock()
+		current := GlobalMetricsRuntime.Get(mk)
+		if current == nil {
+			lock.Unlock()
+			continue
+		}
+		err := model.UpsertChannelModelMetrics(current)
+		lock.Unlock()
+		if err != nil {
+			p.MarkDirty(mk)
+			return count, err
+		}
+		count++
 	}
-	if err := model.UpsertChannelModelMetricsBatch(rows); err != nil {
-		return 0, err
-	}
-	return len(rows), nil
+	return count, nil
 }
 
 // SnapshotCritical immediately persists one metrics row after critical state change (PRD §17).
@@ -82,11 +107,25 @@ func (p *CalibrationPersister) SnapshotCritical(m *model.ChannelModelMetrics) er
 	if m == nil {
 		return nil
 	}
-	if err := model.UpsertChannelModelMetrics(m); err != nil {
+	lock := metricsLockFor(m.MetricsKey())
+	lock.Lock()
+	defer lock.Unlock()
+	return p.snapshotCriticalLocked(m)
+}
+
+func (p *CalibrationPersister) snapshotCriticalLocked(m *model.ChannelModelMetrics) error {
+	if p == nil || m == nil {
+		return nil
+	}
+	current := GlobalMetricsRuntime.Get(m.MetricsKey())
+	if current == nil {
+		return nil
+	}
+	if err := model.UpsertChannelModelMetrics(current); err != nil {
 		return err
 	}
 	p.mu.Lock()
-	delete(p.dirty, m.MetricsKey().String())
+	delete(p.dirty, current.MetricsKey().String())
 	p.mu.Unlock()
 	return nil
 }

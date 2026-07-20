@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/modelroute"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +44,17 @@ func setupModelRouteControllerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.ChannelModelPolicy{}, &model.User{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.ChannelModelPolicy{},
+		&model.ChannelModelMetrics{},
+		&model.User{},
+		&model.Log{},
+	))
+	modelroute.GlobalMetricsRuntime.Clear()
+	modelroute.GlobalRoles.Clear()
+	modelroute.GlobalLeases.ClearAll()
+	modelroute.InvalidateAllRoutePlans()
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -63,6 +74,28 @@ func performModelRouteMutation(t *testing.T, handler gin.HandlerFunc, body map[s
 	handler(ctx)
 
 	var response modelRouteMutationResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	return recorder, response
+}
+
+type metricsActionResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+func performMetricsAction(t *testing.T, body map[string]interface{}) (*httptest.ResponseRecorder, metricsActionResponse) {
+	t.Helper()
+	payload, err := common.Marshal(body)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 7)
+	ctx.Set("username", "root")
+	ctx.Set("role", 100)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/model_route/metrics/action", bytes.NewReader(payload))
+	ModelRouteMetricsAction(ctx)
+
+	var response metricsActionResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	return recorder, response
 }
@@ -121,6 +154,95 @@ func TestListModelRoutePoliciesIncludesChannelStatus(t *testing.T) {
 	assert.True(t, byID[3].ChannelExists)
 	assert.Equal(t, 0, byID[4].ChannelStatus)
 	assert.False(t, byID[4].ChannelExists)
+}
+
+func TestModelRouteMetricsActionResetUnknown(t *testing.T) {
+	db := setupModelRouteControllerTestDB(t)
+	mapping := `{"request-a":"effective","request-b":"effective"}`
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 51, Name: "mapped", Status: common.ChannelStatusEnabled, ModelMapping: &mapping,
+	}).Error)
+	seedControllerModelPolicies(t, "request-a", map[int64]int{51: 100})
+	seedControllerModelPolicies(t, "request-b", map[int64]int{51: 90})
+	cooldown := int64(1_700_000_000)
+	require.NoError(t, model.UpsertChannelModelMetrics(&model.ChannelModelMetrics{
+		ChannelID: 51, EffectiveModel: "effective", RouteState: string(model.RouteOpen),
+		BackoffLevel: 2, CooldownUntil: &cooldown, LastErrorClass: string(model.ErrorDeterministic),
+	}))
+	modelroute.StoreRoutePlan(&model.RoutePlan{RequestedModel: "request-a"})
+	modelroute.StoreRoutePlan(&model.RoutePlan{RequestedModel: "request-b"})
+
+	recorder, response := performMetricsAction(t, map[string]interface{}{
+		"channel_id": 51, "effective_model": "  effective  ", "action": "reset_unknown",
+	})
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.True(t, response.Success)
+	stored, err := model.GetChannelModelMetrics(51, "effective")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, model.RouteUnknown, stored.State())
+	assert.Zero(t, stored.BackoffLevel)
+	assert.Nil(t, stored.CooldownUntil)
+	assert.Empty(t, stored.LastErrorClass)
+	assert.Nil(t, modelroute.GetCachedRoutePlan("request-a"))
+	assert.Nil(t, modelroute.GetCachedRoutePlan("request-b"))
+	var audit model.Log
+	require.NoError(t, db.Where("type = ?", model.LogTypeManage).First(&audit).Error)
+	assert.Equal(t, 7, audit.UserId)
+	assert.Positive(t, audit.CreatedAt)
+	var auditData struct {
+		Op struct {
+			Action string `json:"action"`
+			Params struct {
+				ChannelID      int64  `json:"channel_id"`
+				EffectiveModel string `json:"effective_model"`
+				Action         string `json:"action"`
+			} `json:"params"`
+		} `json:"op"`
+		AdminInfo struct {
+			AdminID int `json:"admin_id"`
+		} `json:"admin_info"`
+	}
+	require.NoError(t, common.Unmarshal([]byte(audit.Other), &auditData))
+	assert.Equal(t, "model_route.metrics_action", auditData.Op.Action)
+	assert.Equal(t, int64(51), auditData.Op.Params.ChannelID)
+	assert.Equal(t, "effective", auditData.Op.Params.EffectiveModel)
+	assert.Equal(t, "reset_unknown", auditData.Op.Params.Action)
+	assert.Equal(t, 7, auditData.AdminInfo.AdminID)
+}
+
+func TestModelRouteMetricsActionResetUnknownRejectsInvalidOrMissingTarget(t *testing.T) {
+	setupModelRouteControllerTestDB(t)
+	tests := []struct {
+		name string
+		body map[string]interface{}
+		code int
+	}{
+		{name: "negative channel", body: map[string]interface{}{
+			"channel_id": -1, "effective_model": "m", "action": "reset_unknown",
+		}, code: http.StatusBadRequest},
+		{name: "blank model", body: map[string]interface{}{
+			"channel_id": 1, "effective_model": "   ", "action": "reset_unknown",
+		}, code: http.StatusBadRequest},
+		{name: "missing row", body: map[string]interface{}{
+			"channel_id": 404, "effective_model": "missing", "action": "reset_unknown",
+		}, code: http.StatusOK},
+		{name: "unknown action", body: map[string]interface{}{
+			"channel_id": 1, "effective_model": "m", "action": "unknown",
+		}, code: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder, response := performMetricsAction(t, test.body)
+			assert.Equal(t, test.code, recorder.Code)
+			assert.False(t, response.Success)
+		})
+	}
+	var count int64
+	require.NoError(t, model.DB.Model(&model.ChannelModelMetrics{}).Count(&count).Error)
+	assert.Zero(t, count)
+	require.NoError(t, model.DB.Model(&model.Log{}).Where("type = ?", model.LogTypeManage).Count(&count).Error)
+	assert.Zero(t, count)
 }
 
 func TestUpdateModelRoutePolicyPrioritySwapsAtomically(t *testing.T) {

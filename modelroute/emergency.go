@@ -226,9 +226,8 @@ func (e *EmergencyCoordinator) leaderRun(
 
 		if result.IsRetryableFailure || (!result.Success && result.StatusCode >= 400) {
 			if rc.Candidate.Metrics != nil {
-				class, ev := ClassifyHTTPStatus(result.StatusCode)
+				_, ev := ClassifyHTTPStatus(result.StatusCode)
 				if ev != EventProductionSuccess {
-					rc.Candidate.Metrics.SetLastErrorClass(class)
 					ApplyTransition(rc.Candidate.Metrics, ev, 0)
 				}
 			}

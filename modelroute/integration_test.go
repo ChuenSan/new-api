@@ -118,13 +118,9 @@ func TestIntegrationShadowProbeRecover(t *testing.T) {
 	prod := &ProductionRequestView{Messages: []ShadowMessage{{Role: "user", Text: "ping"}}}
 	d.MaybeDispatchShadowProbeAsync(prod, "req", "r1", model.MetricsKey{})
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if m.State() == model.RouteRecovering || m.State() == model.RouteHealthy {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		return d.ActiveShadowProbes() == 0
+	}, 2*time.Second, 5*time.Millisecond)
 	assert.Contains(t, []model.RouteState{model.RouteRecovering, model.RouteHealthy}, m.State())
 }
 

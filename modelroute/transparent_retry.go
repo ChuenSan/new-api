@@ -6,13 +6,13 @@ import (
 
 // AttemptOutcome is the classified result of one upstream try (PRD §11.1 / §30).
 type AttemptOutcome struct {
-	Success            bool
+	Success             bool
 	HasEmittedUserBytes bool
-	StatusCode         int
-	RetryAfterSec      int
-	StreamInterrupted  bool
-	ErrorClass         model.ErrorClass
-	Event              TransitionEvent
+	StatusCode          int
+	RetryAfterSec       int
+	StreamInterrupted   bool
+	ErrorClass          model.ErrorClass
+	Event               TransitionEvent
 }
 
 // ClassifyAttempt maps raw attempt signals into state-machine event (PRD §11.1 / §24 / §25).
@@ -45,10 +45,14 @@ func ApplyAttemptOutcome(c *model.ResolvedRouteCandidate, out AttemptOutcome) (c
 	if c == nil || c.Metrics == nil {
 		return false
 	}
+	mk := MakeMetricsKey(c.ChannelID, c.EffectiveModel)
+	lock := metricsLockFor(mk)
+	lock.Lock()
+	defer lock.Unlock()
+	c.Metrics = refreshMetricsLocked(c.Metrics)
 	if out.Success {
-		ApplyTransition(c.Metrics, EventProductionSuccess, 0)
+		applyTransitionLocked(c.Metrics, EventProductionSuccess, 0)
 		// successful production validation → PRIMARY (BOOTSTRAP or first healthy)
-		mk := MakeMetricsKey(c.ChannelID, c.EffectiveModel)
 		role := GlobalRoles.Get(mk)
 		if role == model.RoleBootstrap || role == model.RoleNone {
 			GlobalRoles.Set(mk, model.RolePrimary)
@@ -65,14 +69,14 @@ func ApplyAttemptOutcome(c *model.ResolvedRouteCandidate, out AttemptOutcome) (c
 	if out.HasEmittedUserBytes {
 		// post first-byte non-interrupt failure: still cannot transparent replay
 		if out.Event != "" {
-			ApplyTransition(c.Metrics, out.Event, out.RetryAfterSec)
+			applyTransitionLocked(c.Metrics, out.Event, out.RetryAfterSec)
 		}
 		return false
 	}
 
 	// pre-first-byte failure → update state then transparent retry next
 	if out.Event != "" {
-		ApplyTransition(c.Metrics, out.Event, out.RetryAfterSec)
+		applyTransitionLocked(c.Metrics, out.Event, out.RetryAfterSec)
 	}
 	return true
 }

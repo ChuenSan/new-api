@@ -60,6 +60,10 @@ func MarkActivityNow(m *model.ChannelModelMetrics, production bool) {
 	if m == nil {
 		return
 	}
+	lock := metricsLockFor(m.MetricsKey())
+	lock.Lock()
+	defer lock.Unlock()
+	m = refreshMetricsLocked(m)
 	ts := now().Unix()
 	if production {
 		m.LastRequestAt = &ts

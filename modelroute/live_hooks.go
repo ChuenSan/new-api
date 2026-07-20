@@ -26,15 +26,15 @@ type ProductionOutcome struct {
 // ProductionShadowCapture carries enough of the production request to replay a full probe (not a simplified ping).
 // Executor is expected to hit upstream via the normal relay adaptor path so the provider bills.
 type ProductionShadowCapture struct {
-	View          ProductionRequestView
-	UserID        int
-	TokenID       int
-	TokenName     string
-	Group         string
-	RequestID     string
-	RequestPath   string
-	RelayFormat   string // types.RelayFormat string form when available
-	OriginModel   string
+	View        ProductionRequestView
+	UserID      int
+	TokenID     int
+	TokenName   string
+	Group       string
+	RequestID   string
+	RequestPath string
+	RelayFormat string // types.RelayFormat string form when available
+	OriginModel string
 	// MaxTokens from production when known; 0 means leave to executor/model defaults.
 	MaxTokens int
 }
@@ -62,16 +62,18 @@ func EnsureRuntimeMetrics(channelID int64, effectiveModel string) *model.Channel
 		return nil
 	}
 	mk := MakeMetricsKey(channelID, effectiveModel)
-	if m := GlobalMetricsRuntime.Get(mk); m != nil {
-		MaybeAdvanceCooldown(m)
-		return m
-	}
-	m, err := model.EnsureChannelModelMetrics(channelID, effectiveModel)
+	lock := metricsLockFor(mk)
+	lock.Lock()
+	defer lock.Unlock()
+	return ensureRuntimeMetricsLocked(channelID, effectiveModel)
+}
+
+func ensureRuntimeMetricsLocked(channelID int64, effectiveModel string) *model.ChannelModelMetrics {
+	m, err := loadOrEnsureMetricsLocked(channelID, effectiveModel)
 	if err != nil || m == nil {
 		return nil
 	}
-	GlobalMetricsRuntime.Put(m)
-	MaybeAdvanceCooldown(m)
+	maybeAdvanceCooldownLocked(m)
 	return m
 }
 
@@ -88,7 +90,11 @@ func ApplyProductionOutcome(out ProductionOutcome) {
 	if err != nil {
 		eff = out.RequestedModel
 	}
-	m := EnsureRuntimeMetrics(out.ChannelID, eff)
+	mk := MakeMetricsKey(out.ChannelID, eff)
+	lock := metricsLockFor(mk)
+	lock.Lock()
+	defer lock.Unlock()
+	m := ensureRuntimeMetricsLocked(out.ChannelID, eff)
 	if m == nil {
 		return
 	}
@@ -98,7 +104,7 @@ func ApplyProductionOutcome(out ProductionOutcome) {
 		RecordStreamInterruptionSample(m, true)
 		RecordProductionFailureSample(m)
 		_ = RefreshExperienceScore(m)
-		GlobalCalibrationPersister.MarkDirty(MakeMetricsKey(out.ChannelID, eff))
+		GlobalCalibrationPersister.MarkDirty(mk)
 		return
 	}
 
@@ -109,14 +115,13 @@ func ApplyProductionOutcome(out ProductionOutcome) {
 		if out.TTFT > 0 {
 			RecordProductionTTFT(m, out.TTFT)
 		}
-		ApplyTransition(m, EventProductionSuccess, 0)
-		mk := MakeMetricsKey(out.ChannelID, eff)
+		applyTransitionLocked(m, EventProductionSuccess, 0)
 		role := GlobalRoles.Get(mk)
 		if role == model.RoleBootstrap || role == model.RoleNone {
 			GlobalRoles.Set(mk, model.RolePrimary)
 		}
 		_ = RefreshExperienceScore(m)
-		GlobalCalibrationPersister.MarkDirty(MakeMetricsKey(out.ChannelID, eff))
+		GlobalCalibrationPersister.MarkDirty(mk)
 		InvalidateRoutePlan(out.RequestedModel)
 		return
 	}
@@ -137,12 +142,12 @@ func ApplyProductionOutcome(out ProductionOutcome) {
 	case model.ErrorDeterministic:
 		RecordTemporaryErrorSample(m, false)
 	}
-	ApplyTransition(m, ev, 0)
+	applyTransitionLocked(m, ev, 0)
 	if st := m.State(); st == model.RouteProbing || st == model.RouteOpen || st == model.RouteRateLimited {
 		EnqueueFromMetrics(m, 0)
 	}
 	_ = RefreshExperienceScore(m)
-	GlobalCalibrationPersister.MarkDirty(MakeMetricsKey(out.ChannelID, eff))
+	GlobalCalibrationPersister.MarkDirty(mk)
 	// hard failures already SnapshotCritical via ApplyTransition; ensure dirty for soft fails
 	InvalidateRoutePlan(out.RequestedModel)
 }
@@ -207,7 +212,6 @@ func ApplyProductionOutcomeAsync(out ProductionOutcome) {
 		}
 	})
 }
-
 
 // AcquireProductionSlotForRequest takes a production concurrency slot for channel×model (PRD §19).
 // Returns nil slot when model_priority is off (caller should not track) or unlimited capacity always ok.

@@ -46,8 +46,9 @@ func (s *RuntimeRoleStore) Clear() {
 
 // RuntimeMetricsCache holds hot metrics copies for state transitions without always hitting DB.
 type RuntimeMetricsCache struct {
-	mu   sync.RWMutex
-	data map[string]*model.ChannelModelMetrics
+	mu        sync.RWMutex
+	data      map[string]*model.ChannelModelMetrics
+	resetKeys map[string]struct{}
 	// recent temporary failures window per key (timestamps unix nano)
 	failWindow map[string][]int64
 }
@@ -55,6 +56,7 @@ type RuntimeMetricsCache struct {
 // GlobalMetricsRuntime is the process-local metrics overlay.
 var GlobalMetricsRuntime = &RuntimeMetricsCache{
 	data:       make(map[string]*model.ChannelModelMetrics),
+	resetKeys:  make(map[string]struct{}),
 	failWindow: make(map[string][]int64),
 }
 
@@ -71,14 +73,33 @@ func (c *RuntimeMetricsCache) Put(m *model.ChannelModelMetrics) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// shallow copy pointer store; callers own mutation under external discipline
-	c.data[m.MetricsKey().String()] = m
+	key := m.MetricsKey().String()
+	c.data[key] = m
+	delete(c.resetKeys, key)
 }
 
 func (c *RuntimeMetricsCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data = make(map[string]*model.ChannelModelMetrics)
+	c.resetKeys = make(map[string]struct{})
 	c.failWindow = make(map[string][]int64)
+}
+
+func (c *RuntimeMetricsCache) Delete(mk model.MetricsKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := mk.String()
+	delete(c.data, key)
+	delete(c.failWindow, key)
+	c.resetKeys[key] = struct{}{}
+}
+
+func (c *RuntimeMetricsCache) needsRefresh(mk model.MetricsKey) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.resetKeys[mk.String()]
+	return ok
 }
 
 func (c *RuntimeMetricsCache) recordTempFailure(mk model.MetricsKey) {
@@ -109,6 +130,14 @@ func (c *RuntimeMetricsCache) tempFailuresInWindow(mk model.MetricsKey) int {
 // LoadOrEnsureMetrics loads DB row into runtime cache.
 func LoadOrEnsureMetrics(channelID int64, effectiveModel string) (*model.ChannelModelMetrics, error) {
 	mk := MakeMetricsKey(channelID, effectiveModel)
+	lock := metricsLockFor(mk)
+	lock.Lock()
+	defer lock.Unlock()
+	return loadOrEnsureMetricsLocked(channelID, effectiveModel)
+}
+
+func loadOrEnsureMetricsLocked(channelID int64, effectiveModel string) (*model.ChannelModelMetrics, error) {
+	mk := MakeMetricsKey(channelID, effectiveModel)
 	if m := GlobalMetricsRuntime.Get(mk); m != nil {
 		return m, nil
 	}
@@ -118,6 +147,26 @@ func LoadOrEnsureMetrics(channelID int64, effectiveModel string) (*model.Channel
 	}
 	GlobalMetricsRuntime.Put(m)
 	return m, nil
+}
+
+func refreshMetricsLocked(m *model.ChannelModelMetrics) *model.ChannelModelMetrics {
+	if m == nil {
+		return nil
+	}
+	mk := m.MetricsKey()
+	if current := GlobalMetricsRuntime.Get(mk); current != nil {
+		if current != m {
+			*m = *current
+		}
+		return m
+	}
+	if GlobalMetricsRuntime.needsRefresh(mk) {
+		persisted, err := model.GetChannelModelMetrics(mk.ChannelID, mk.EffectiveModel)
+		if err == nil && persisted != nil {
+			*m = *persisted
+		}
+	}
+	return m
 }
 
 // TransitionEvent drives the RouteState machine (PRD §8.1 / §24 / §25 / §26).
@@ -130,7 +179,7 @@ const (
 	EventTemporaryFail     TransitionEvent = "temporary_fail"
 	EventProbeSuccess      TransitionEvent = "probe_success"
 	EventProbeFail         TransitionEvent = "probe_fail"
-	EventCooldownElapsed    TransitionEvent = "cooldown_elapsed"
+	EventCooldownElapsed   TransitionEvent = "cooldown_elapsed"
 	EventManualDisable     TransitionEvent = "manual_disable"
 	EventRestoreAuto       TransitionEvent = "restore_auto"
 	EventForceProbe        TransitionEvent = "force_probe"
@@ -139,6 +188,16 @@ const (
 
 // ApplyTransition mutates metrics state according to PRD rules. Returns true if state changed.
 func ApplyTransition(m *model.ChannelModelMetrics, event TransitionEvent, retryAfterSec int) bool {
+	if m == nil {
+		return false
+	}
+	lock := metricsLockFor(m.MetricsKey())
+	lock.Lock()
+	defer lock.Unlock()
+	return applyTransitionLocked(refreshMetricsLocked(m), event, retryAfterSec)
+}
+
+func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, retryAfterSec int) bool {
 	if m == nil {
 		return false
 	}
@@ -273,7 +332,7 @@ func ApplyTransition(m *model.ChannelModelMetrics, event TransitionEvent, retryA
 		switch after {
 		case model.RouteOpen, model.RouteRateLimited, model.RouteManuallyDisabled,
 			model.RouteHealthy, model.RouteProbing, model.RouteRecovering:
-			_ = GlobalCalibrationPersister.SnapshotCritical(m)
+			_ = GlobalCalibrationPersister.snapshotCriticalLocked(m)
 		default:
 			GlobalCalibrationPersister.MarkDirty(mk)
 		}
@@ -319,13 +378,23 @@ func MaybeAdvanceCooldown(m *model.ChannelModelMetrics) bool {
 	if m == nil {
 		return false
 	}
+	lock := metricsLockFor(m.MetricsKey())
+	lock.Lock()
+	defer lock.Unlock()
+	return maybeAdvanceCooldownLocked(refreshMetricsLocked(m))
+}
+
+func maybeAdvanceCooldownLocked(m *model.ChannelModelMetrics) bool {
+	if m == nil {
+		return false
+	}
 	st := m.State()
 	if st != model.RouteRateLimited && st != model.RouteOpen {
 		return false
 	}
 	until := m.CooldownUntilTime()
 	if until.IsZero() || !now().Before(until) {
-		return ApplyTransition(m, EventCooldownElapsed, 0)
+		return applyTransitionLocked(m, EventCooldownElapsed, 0)
 	}
 	return false
 }

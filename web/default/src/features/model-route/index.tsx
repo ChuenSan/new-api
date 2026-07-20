@@ -23,6 +23,16 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -46,16 +56,31 @@ import {
   pruneModelRouteOrphans,
   reorderModelRoutePolicies,
   resetAllLearning,
+  resetModelRouteMetricsUnknown,
   resetRuntimeLearning,
   updateModelRoutePolicyPriority,
 } from './api'
 import { PolicySortableGroup } from './components/policy-sortable-group'
 import {
+  type BatchMetricsAction,
+  type MetricsAction,
+  getMetricsActionErrorMessage,
+  isBatchMetricsAction,
+  isMetricsAction,
+  metricsRowKey,
+  patchMetricsResetUnknown,
+  rowMetricsActions,
+} from './lib/metrics-reset'
+import {
   filterPolicyGroupByChannel,
   groupModelRoutePolicies,
   replaceModelPolicyGroup,
 } from './lib/policy-order'
-import type { ModelRouteMetrics, ModelRoutePolicy } from './types'
+import type {
+  ModelRouteMetrics,
+  ModelRouteMetricsResponse,
+  ModelRoutePolicy,
+} from './types'
 
 function fmtTs(ts?: number | null) {
   if (!ts) return '—'
@@ -185,18 +210,6 @@ function matchesAnyModelSearch(
   return values.some((v) => matchesModelSearch(v, keyword, exact))
 }
 
-function metricsRowKey(
-  row: Pick<ModelRouteMetrics, 'channel_id' | 'effective_model'>
-) {
-  return `${row.channel_id}:${row.effective_model}`
-}
-
-type MetricsAction =
-  | 'trip_open'
-  | 'force_probe'
-  | 'manual_disable'
-  | 'restore_auto'
-
 export function ModelRouteAdmin() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -210,6 +223,11 @@ export function ModelRouteAdmin() {
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchActionKey, setBatchActionKey] = useState(0)
   const [rowActionKey, setRowActionKey] = useState(0)
+  const [resetUnknownTarget, setResetUnknownTarget] =
+    useState<ModelRouteMetrics | null>(null)
+  const [pendingMetricKeys, setPendingMetricKeys] = useState<Set<string>>(
+    () => new Set()
+  )
   const [priorityBusyModels, setPriorityBusyModels] = useState<Set<string>>(
     () => new Set()
   )
@@ -227,6 +245,14 @@ export function ModelRouteAdmin() {
     queryKey: ['model-route-metrics'],
     queryFn: () => listModelRouteMetrics(),
   })
+
+  const metricsActionLabels: Record<MetricsAction, string> = {
+    force_probe: t('Force probe'),
+    trip_open: t('Trip open'),
+    manual_disable: t('Manual disable'),
+    restore_auto: t('Restore auto'),
+    reset_unknown: t('Reset to unknown'),
+  }
 
   const migrateMut = useMutation({
     mutationFn: migrateToModelPriority,
@@ -468,6 +494,41 @@ export function ModelRouteAdmin() {
     onError: (err: Error) => toast.error(err.message),
   })
 
+  const resetUnknownMut = useMutation({
+    mutationFn: resetModelRouteMetricsUnknown,
+    onSuccess: (res, variables) => {
+      if (!res.success) {
+        toast.error(res.message || t('Failed to reset state to unknown'))
+        return
+      }
+      qc.setQueryData<ModelRouteMetricsResponse>(
+        ['model-route-metrics'],
+        (current) => patchMetricsResetUnknown(current, variables)
+      )
+      setResetUnknownTarget((current) =>
+        current && metricsRowKey(current) === metricsRowKey(variables)
+          ? null
+          : current
+      )
+      toast.success(t('State reset to unknown'))
+      setRowActionKey((value) => value + 1)
+      void qc.invalidateQueries({ queryKey: ['model-route-metrics'] })
+    },
+    onError: (error: unknown) =>
+      toast.error(
+        getMetricsActionErrorMessage(error) ||
+          t('Failed to reset state to unknown')
+      ),
+    onSettled: (_data, _error, variables) => {
+      const key = metricsRowKey(variables)
+      setPendingMetricKeys((current) => {
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
+    },
+  })
+
   const resetRuntimeMut = useMutation({
     mutationFn: resetRuntimeLearning,
     onSuccess: (res) => {
@@ -624,7 +685,19 @@ export function ModelRouteAdmin() {
   }
 
   const isRefreshing = policyQuery.isFetching || metricsQuery.isFetching
-  const rowActionDisabled = batchBusy
+
+  const confirmResetUnknown = () => {
+    if (!resetUnknownTarget) return
+    const target = resetUnknownTarget
+    const key = metricsRowKey(target)
+    if (pendingMetricKeys.has(key)) return
+    setPendingMetricKeys((current) => new Set(current).add(key))
+    resetUnknownMut.mutate({
+      channel_id: target.channel_id,
+      effective_model: target.effective_model,
+      action: 'reset_unknown',
+    })
+  }
 
   const handleRefresh = async () => {
     if (isRefreshing) return
@@ -798,25 +871,8 @@ export function ModelRouteAdmin() {
                   key={batchActionKey}
                   disabled={batchBusy}
                   onValueChange={(action) => {
-                    if (
-                      typeof action !== 'string' ||
-                      ![
-                        'trip_open',
-                        'force_probe',
-                        'manual_disable',
-                        'restore_auto',
-                      ].includes(action)
-                    ) {
-                      return
-                    }
-                    const typed = action as MetricsAction
-                    const labelMap: Record<MetricsAction, string> = {
-                      force_probe: t('Force probe'),
-                      trip_open: t('Trip open'),
-                      manual_disable: t('Manual disable'),
-                      restore_auto: t('Restore auto'),
-                    }
-                    const confirmMap: Record<MetricsAction, string> = {
+                    if (!isBatchMetricsAction(action)) return
+                    const confirmMap: Record<BatchMetricsAction, string> = {
                       force_probe: t(
                         'Confirm force probe for {{count}} selected metrics?',
                         { count: selectedMetrics.length }
@@ -835,13 +891,13 @@ export function ModelRouteAdmin() {
                       ),
                     }
                     void runOnSelectedMetrics(
-                      labelMap[typed],
-                      confirmMap[typed],
+                      metricsActionLabels[action],
+                      confirmMap[action],
                       (row) =>
                         modelRouteMetricsAction({
                           channel_id: row.channel_id,
                           effective_model: row.effective_model,
-                          action: typed,
+                          action,
                         })
                     )
                   }}
@@ -977,6 +1033,8 @@ export function ModelRouteAdmin() {
                     const key = metricsRowKey(row)
                     const selected = selectedMetricKeys.has(key)
                     const requestedModels = row.requested_models ?? []
+                    const rowSelectDisabled =
+                      batchBusy || pendingMetricKeys.has(key)
                     return (
                       <tr
                         key={key}
@@ -1053,23 +1111,17 @@ export function ModelRouteAdmin() {
                           <div className='flex flex-wrap items-center gap-1.5'>
                             <Select
                               key={`${key}:${rowActionKey}`}
-                              disabled={rowActionDisabled}
+                              disabled={rowSelectDisabled}
                               onValueChange={(action) => {
-                                if (
-                                  typeof action !== 'string' ||
-                                  ![
-                                    'trip_open',
-                                    'force_probe',
-                                    'manual_disable',
-                                    'restore_auto',
-                                  ].includes(action)
-                                ) {
+                                if (!isMetricsAction(action)) return
+                                if (action === 'reset_unknown') {
+                                  setResetUnknownTarget(row)
                                   return
                                 }
                                 actionMut.mutate({
                                   channel_id: row.channel_id,
                                   effective_model: row.effective_model,
-                                  action: action as MetricsAction,
+                                  action,
                                 })
                               }}
                             >
@@ -1078,18 +1130,11 @@ export function ModelRouteAdmin() {
                               </SelectTrigger>
                               <SelectContent alignItemWithTrigger={false}>
                                 <SelectGroup>
-                                  <SelectItem value='force_probe'>
-                                    {t('Force probe')}
-                                  </SelectItem>
-                                  <SelectItem value='trip_open'>
-                                    {t('Trip open')}
-                                  </SelectItem>
-                                  <SelectItem value='manual_disable'>
-                                    {t('Manual disable')}
-                                  </SelectItem>
-                                  <SelectItem value='restore_auto'>
-                                    {t('Restore auto')}
-                                  </SelectItem>
+                                  {rowMetricsActions.map((action) => (
+                                    <SelectItem key={action} value={action}>
+                                      {metricsActionLabels[action]}
+                                    </SelectItem>
+                                  ))}
                                 </SelectGroup>
                               </SelectContent>
                             </Select>
@@ -1097,7 +1142,7 @@ export function ModelRouteAdmin() {
                               size='sm'
                               variant='outline'
                               className='h-8'
-                              disabled={rowActionDisabled}
+                              disabled={batchBusy}
                               onClick={() =>
                                 resetRuntimeMut.mutate({
                                   channel_id: row.channel_id,
@@ -1111,7 +1156,7 @@ export function ModelRouteAdmin() {
                               size='sm'
                               variant='destructive'
                               className='h-8'
-                              disabled={rowActionDisabled}
+                              disabled={batchBusy}
                               onClick={() => {
                                 if (
                                   !window.confirm(
@@ -1157,6 +1202,47 @@ export function ModelRouteAdmin() {
           </TabsContent>
         </Tabs>
       </SectionPageLayout.Content>
+      <AlertDialog
+        open={resetUnknownTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setResetUnknownTarget(null)
+            setRowActionKey((value) => value + 1)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('Confirm reset to unknown')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'Reset channel {{channel}} / model {{model}} to unknown? This clears backoff and lets it re-enter the production pool when other routing conditions are met. If the upstream still fails, the state machine may open it again immediately.',
+                {
+                  channel: resetUnknownTarget
+                    ? formatChannelLabel(
+                        resetUnknownTarget.channel_id,
+                        resetUnknownTarget.channel_name
+                      )
+                    : '',
+                  model: resetUnknownTarget?.effective_model || '',
+                }
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={
+                !resetUnknownTarget ||
+                pendingMetricKeys.has(metricsRowKey(resetUnknownTarget))
+              }
+              onClick={confirmResetUnknown}
+            >
+              {t('Confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SectionPageLayout>
   )
 }

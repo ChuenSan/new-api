@@ -78,15 +78,15 @@ func TestProbeQueueOrder(t *testing.T) {
 	q := NewProbeQueue()
 	base := time.Unix(1_700_000_000, 0)
 	q.Upsert(model.ProbeQueueItem{
-		MetricsKey: model.MetricsKey{ChannelID: 1, EffectiveModel: "a"},
+		MetricsKey:  model.MetricsKey{ChannelID: 1, EffectiveModel: "a"},
 		NextProbeAt: base.Add(10 * time.Second), ManualPriority: 100,
 	})
 	q.Upsert(model.ProbeQueueItem{
-		MetricsKey: model.MetricsKey{ChannelID: 2, EffectiveModel: "b"},
+		MetricsKey:  model.MetricsKey{ChannelID: 2, EffectiveModel: "b"},
 		NextProbeAt: base, ManualPriority: 10,
 	})
 	q.Upsert(model.ProbeQueueItem{
-		MetricsKey: model.MetricsKey{ChannelID: 3, EffectiveModel: "c"},
+		MetricsKey:  model.MetricsKey{ChannelID: 3, EffectiveModel: "c"},
 		NextProbeAt: base, ManualPriority: 50,
 	})
 	// due at base: higher manual_priority first among same next_probe_at
@@ -147,14 +147,8 @@ func TestShadowDispatcherAsyncNoBlock(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	assert.Equal(t, int32(1), ran.Load())
-	// eventually recovering/healthy
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		st := m.State()
-		if st == model.RouteRecovering || st == model.RouteHealthy {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		return d.ActiveShadowProbes() == 0
+	}, 2*time.Second, 5*time.Millisecond)
 	assert.Contains(t, []model.RouteState{model.RouteRecovering, model.RouteHealthy}, m.State())
 }

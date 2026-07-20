@@ -46,10 +46,16 @@ func PromoteToPrimary(c *model.ResolvedRouteCandidate) {
 		return
 	}
 	mk := MakeMetricsKey(c.ChannelID, c.EffectiveModel)
+	lock := metricsLockFor(mk)
+	lock.Lock()
+	defer lock.Unlock()
 	// demote previous primary for this requested model is plan-level; here only set this key
 	GlobalRoles.Set(mk, model.RolePrimary)
+	if c.Metrics != nil {
+		c.Metrics = refreshMetricsLocked(c.Metrics)
+	}
 	if c.Metrics != nil && c.Metrics.State() == model.RouteUnknown {
-		ApplyTransition(c.Metrics, EventProductionSuccess, 0)
+		applyTransitionLocked(c.Metrics, EventProductionSuccess, 0)
 	}
 }
 

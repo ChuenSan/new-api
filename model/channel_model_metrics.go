@@ -289,26 +289,61 @@ func EnsureChannelModelMetrics(channelID int64, effectiveModel string) (*Channel
 	return m, nil
 }
 
+// ResetChannelModelMetricsUnknown preserves learned metrics while resetting health controls.
+func ResetChannelModelMetricsUnknown(
+	channelID int64,
+	effectiveModel string,
+	runtime *ChannelModelMetrics,
+) (*ChannelModelMetrics, error) {
+	var result ChannelModelMetrics
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("channel_id = ? AND effective_model = ?", channelID, effectiveModel).
+			First(&result).Error; err != nil {
+			return err
+		}
+
+		if runtime != nil && runtime.ChannelID == channelID && runtime.EffectiveModel == effectiveModel {
+			createdAt := result.CreatedAt
+			result = *runtime
+			result.CreatedAt = createdAt
+		}
+		result.RouteState = string(RouteUnknown)
+		result.BackoffLevel = 0
+		result.CooldownUntil = nil
+		result.LastErrorClass = ""
+		result.UpdatedAt = common.GetTimestamp()
+
+		return tx.Model(&ChannelModelMetrics{}).
+			Where("channel_id = ? AND effective_model = ?", channelID, effectiveModel).
+			Select(metricsSnapshotUpdateColumns).
+			Updates(&result).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // ResetChannelModelMetricsRuntime clears short-term learning fields, keeps calibration (PRD §18.1).
 func ResetChannelModelMetricsRuntime(channelID int64, effectiveModel string) error {
 	return DB.Model(&ChannelModelMetrics{}).
 		Where("channel_id = ? AND effective_model = ?", channelID, effectiveModel).
 		Updates(map[string]interface{}{
-			"production_sample_count":           0,
-			"shadow_sample_count":               0,
-			"production_success_ema":            nil,
-			"shadow_transport_success_ema":      nil,
-			"temporary_error_ema":               nil,
-			"rate_limit_ema":                    nil,
-			"timeout_ema":                       nil,
-			"stream_interruption_ema":           nil,
-			"production_ttft_ema_ms":            nil,
-			"shadow_ttft_ema_ms":                nil,
-			"production_total_latency_ema_ms":   nil,
-			"shadow_total_latency_ema_ms":       nil,
-			"production_tokens_per_second_ema":  nil,
-			"experience_score":                  nil,
-			"updated_at":                        common.GetTimestamp(),
+			"production_sample_count":          0,
+			"shadow_sample_count":              0,
+			"production_success_ema":           nil,
+			"shadow_transport_success_ema":     nil,
+			"temporary_error_ema":              nil,
+			"rate_limit_ema":                   nil,
+			"timeout_ema":                      nil,
+			"stream_interruption_ema":          nil,
+			"production_ttft_ema_ms":           nil,
+			"shadow_ttft_ema_ms":               nil,
+			"production_total_latency_ema_ms":  nil,
+			"shadow_total_latency_ema_ms":      nil,
+			"production_tokens_per_second_ema": nil,
+			"experience_score":                 nil,
+			"updated_at":                       common.GetTimestamp(),
 		}).Error
 }
 

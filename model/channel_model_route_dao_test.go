@@ -389,6 +389,64 @@ func TestEnsureChannelModelMetricsLazyCreate(t *testing.T) {
 	assert.Equal(t, m.ChannelID, again.ChannelID)
 }
 
+func TestResetChannelModelMetricsUnknownPreservesLatestLearning(t *testing.T) {
+	truncateTables(t)
+	persistedScore := 0.4
+	persisted := &ChannelModelMetrics{
+		ChannelID: 44, EffectiveModel: "mapped-model", RouteState: string(RouteOpen),
+		LastErrorClass: string(ErrorDeterministic), BackoffLevel: 3,
+		ExperienceScore: &persistedScore, ProductionSampleCount: 7,
+	}
+	cooldown := int64(1_700_000_000)
+	persisted.CooldownUntil = &cooldown
+	require.NoError(t, UpsertChannelModelMetrics(persisted))
+
+	runtimeScore := 0.91
+	runtimeSuccess := 0.98
+	runtime := *persisted
+	runtime.ExperienceScore = &runtimeScore
+	runtime.ProductionSuccessEMA = &runtimeSuccess
+	runtime.ProductionSampleCount = 19
+	lastSuccess := int64(1_700_000_123)
+	runtime.LastSuccessAt = &lastSuccess
+
+	reset, err := ResetChannelModelMetricsUnknown(44, "mapped-model", &runtime)
+	require.NoError(t, err)
+	require.NotNil(t, reset)
+	assert.Equal(t, string(RouteUnknown), reset.RouteState)
+	assert.Zero(t, reset.BackoffLevel)
+	assert.Nil(t, reset.CooldownUntil)
+	assert.Empty(t, reset.LastErrorClass)
+
+	stored, err := GetChannelModelMetrics(44, "mapped-model")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, string(RouteUnknown), stored.RouteState)
+	assert.Zero(t, stored.BackoffLevel)
+	assert.Nil(t, stored.CooldownUntil)
+	assert.Empty(t, stored.LastErrorClass)
+	assert.Equal(t, int64(19), stored.ProductionSampleCount)
+	require.NotNil(t, stored.ExperienceScore)
+	assert.InDelta(t, runtimeScore, *stored.ExperienceScore, 1e-9)
+	require.NotNil(t, stored.ProductionSuccessEMA)
+	assert.InDelta(t, runtimeSuccess, *stored.ProductionSuccessEMA, 1e-9)
+	assert.Equal(t, &lastSuccess, stored.LastSuccessAt)
+
+	_, err = ResetChannelModelMetricsUnknown(44, "mapped-model", nil)
+	require.NoError(t, err)
+	stored, err = GetChannelModelMetrics(44, "mapped-model")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, int64(19), stored.ProductionSampleCount)
+	require.NotNil(t, stored.ExperienceScore)
+	assert.InDelta(t, runtimeScore, *stored.ExperienceScore, 1e-9)
+	_, err = ResetChannelModelMetricsUnknown(404, "missing", nil)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	missing, loadErr := GetChannelModelMetrics(404, "missing")
+	require.NoError(t, loadErr)
+	assert.Nil(t, missing)
+}
+
 func TestUpsertChannelModelPoliciesBatch(t *testing.T) {
 	truncateTables(t)
 
