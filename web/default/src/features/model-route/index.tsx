@@ -64,6 +64,8 @@ import { PolicySortableGroup } from './components/policy-sortable-group'
 import {
   type BatchMetricsAction,
   type MetricsAction,
+  batchMetricsActions,
+  buildMetricsActionItems,
   getMetricsActionErrorMessage,
   isBatchMetricsAction,
   isMetricsAction,
@@ -253,6 +255,14 @@ export function ModelRouteAdmin() {
     restore_auto: t('Restore auto'),
     reset_unknown: t('Reset to unknown'),
   }
+  const batchMetricsActionItems = buildMetricsActionItems(
+    batchMetricsActions,
+    metricsActionLabels
+  )
+  const rowMetricsActionItems = buildMetricsActionItems(
+    rowMetricsActions,
+    metricsActionLabels
+  )
 
   const migrateMut = useMutation({
     mutationFn: migrateToModelPriority,
@@ -496,11 +506,15 @@ export function ModelRouteAdmin() {
 
   const resetUnknownMut = useMutation({
     mutationFn: resetModelRouteMetricsUnknown,
-    onSuccess: (res, variables) => {
+    onSuccess: async (res, variables) => {
       if (!res.success) {
         toast.error(res.message || t('Failed to reset state to unknown'))
         return
       }
+      await qc.cancelQueries({
+        queryKey: ['model-route-metrics'],
+        exact: true,
+      })
       qc.setQueryData<ModelRouteMetricsResponse>(
         ['model-route-metrics'],
         (current) => patchMetricsResetUnknown(current, variables)
@@ -869,6 +883,7 @@ export function ModelRouteAdmin() {
                 </span>
                 <Select
                   key={batchActionKey}
+                  items={batchMetricsActionItems}
                   disabled={batchBusy}
                   onValueChange={(action) => {
                     if (!isBatchMetricsAction(action)) return
@@ -907,18 +922,11 @@ export function ModelRouteAdmin() {
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false}>
                     <SelectGroup>
-                      <SelectItem value='force_probe'>
-                        {t('Force probe')}
-                      </SelectItem>
-                      <SelectItem value='trip_open'>
-                        {t('Trip open')}
-                      </SelectItem>
-                      <SelectItem value='manual_disable'>
-                        {t('Manual disable')}
-                      </SelectItem>
-                      <SelectItem value='restore_auto'>
-                        {t('Restore auto')}
-                      </SelectItem>
+                      {batchMetricsActionItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -1111,6 +1119,7 @@ export function ModelRouteAdmin() {
                           <div className='flex flex-wrap items-center gap-1.5'>
                             <Select
                               key={`${key}:${rowActionKey}`}
+                              items={rowMetricsActionItems}
                               disabled={rowSelectDisabled}
                               onValueChange={(action) => {
                                 if (!isMetricsAction(action)) return
@@ -1130,9 +1139,12 @@ export function ModelRouteAdmin() {
                               </SelectTrigger>
                               <SelectContent alignItemWithTrigger={false}>
                                 <SelectGroup>
-                                  {rowMetricsActions.map((action) => (
-                                    <SelectItem key={action} value={action}>
-                                      {metricsActionLabels[action]}
+                                  {rowMetricsActionItems.map((item) => (
+                                    <SelectItem
+                                      key={item.value}
+                                      value={item.value}
+                                    >
+                                      {item.label}
                                     </SelectItem>
                                   ))}
                                 </SelectGroup>

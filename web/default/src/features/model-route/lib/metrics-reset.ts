@@ -33,6 +33,13 @@ export const rowMetricsActions = [
 export type BatchMetricsAction = (typeof batchMetricsActions)[number]
 export type MetricsAction = (typeof rowMetricsActions)[number]
 
+export function buildMetricsActionItems<T extends MetricsAction>(
+  actions: readonly T[],
+  labels: Record<T, string>
+) {
+  return actions.map((value) => ({ value, label: labels[value] }))
+}
+
 export function isBatchMetricsAction(
   value: unknown
 ): value is BatchMetricsAction {

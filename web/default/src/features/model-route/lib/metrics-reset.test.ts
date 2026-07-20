@@ -22,6 +22,7 @@ import { describe, test } from 'node:test'
 import type { ModelRouteMetricsResponse } from '../types'
 import {
   batchMetricsActions,
+  buildMetricsActionItems,
   getMetricsActionErrorMessage,
   metricsRowKey,
   patchMetricsResetUnknown,
@@ -64,6 +65,24 @@ describe('model route metrics reset helpers', () => {
       'manual_disable',
       'restore_auto',
       'reset_unknown',
+    ])
+  })
+
+  test('builds localized select items without exposing action values', () => {
+    const labels = {
+      force_probe: '强制探测',
+      trip_open: '立即熔断',
+      manual_disable: '手动禁用',
+      restore_auto: '恢复自动',
+      reset_unknown: '重置为未知',
+    }
+
+    assert.deepEqual(buildMetricsActionItems(rowMetricsActions, labels), [
+      { value: 'force_probe', label: '强制探测' },
+      { value: 'trip_open', label: '立即熔断' },
+      { value: 'manual_disable', label: '手动禁用' },
+      { value: 'restore_auto', label: '恢复自动' },
+      { value: 'reset_unknown', label: '重置为未知' },
     ])
   })
 
