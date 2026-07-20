@@ -1027,6 +1027,7 @@
     "Confirm Payment": "Xác nhận Thanh toán",
     "Confirm reset runtime for {{count}} selected metrics?": "Confirm reset runtime for {{count}} selected metrics?",
     "Confirm reset to unknown": "Xác nhận đặt lại về trạng thái chưa xác định",
+    "Confirm reset to unknown for {{count}} selected metrics?": "Xác nhận đặt lại {{count}} chỉ số đã chọn về trạng thái chưa xác định?",
     "Confirm restore auto for {{count}} selected metrics?": "Confirm restore auto for {{count}} selected metrics?",
     "Confirm Selection": "Xác nhận lựa chọn",
     "Confirm settings and finish setup": "Xác nhận cài đặt và hoàn tất thiết lập",

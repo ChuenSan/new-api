@@ -16,22 +16,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ModelRouteMetrics, ModelRouteMetricsResponse } from '../types'
+import type {
+  MetricsActionRequest,
+  ModelRouteMetrics,
+  ModelRouteMetricsResponse,
+} from '../types'
 
-export const batchMetricsActions = [
+export type MetricsAction = MetricsActionRequest['action']
+
+export const metricsActions = [
   'force_probe',
   'trip_open',
   'manual_disable',
   'restore_auto',
-] as const
-
-export const rowMetricsActions = [
-  ...batchMetricsActions,
   'reset_unknown',
-] as const
+] as const satisfies readonly MetricsAction[]
 
-export type BatchMetricsAction = (typeof batchMetricsActions)[number]
-export type MetricsAction = (typeof rowMetricsActions)[number]
+export const batchMetricsActions = metricsActions
+export const rowMetricsActions = metricsActions
+
+export type BatchMetricsAction = MetricsAction
 
 export function buildMetricsActionItems<T extends MetricsAction>(
   actions: readonly T[],
@@ -43,16 +47,12 @@ export function buildMetricsActionItems<T extends MetricsAction>(
 export function isBatchMetricsAction(
   value: unknown
 ): value is BatchMetricsAction {
-  return (
-    typeof value === 'string' &&
-    batchMetricsActions.includes(value as BatchMetricsAction)
-  )
+  return isMetricsAction(value)
 }
 
 export function isMetricsAction(value: unknown): value is MetricsAction {
   return (
-    typeof value === 'string' &&
-    rowMetricsActions.includes(value as MetricsAction)
+    typeof value === 'string' && metricsActions.includes(value as MetricsAction)
   )
 }
 
@@ -60,6 +60,17 @@ export function metricsRowKey(
   row: Pick<ModelRouteMetrics, 'channel_id' | 'effective_model'>
 ) {
   return `${row.channel_id}:${row.effective_model}`
+}
+
+export function buildMetricsActionRequest<T extends MetricsAction>(
+  row: Pick<ModelRouteMetrics, 'channel_id' | 'effective_model'>,
+  action: T
+) {
+  return {
+    channel_id: row.channel_id,
+    effective_model: row.effective_model,
+    action,
+  }
 }
 
 export function getMetricsActionErrorMessage(

@@ -1027,6 +1027,7 @@
     "Confirm Payment": "Confirmer le paiement",
     "Confirm reset runtime for {{count}} selected metrics?": "Confirm reset runtime for {{count}} selected metrics?",
     "Confirm reset to unknown": "Confirmer la réinitialisation à l’état inconnu",
+    "Confirm reset to unknown for {{count}} selected metrics?": "Confirmer la réinitialisation à l’état inconnu de {{count}} métriques sélectionnées ?",
     "Confirm restore auto for {{count}} selected metrics?": "Confirm restore auto for {{count}} selected metrics?",
     "Confirm Selection": "Confirmer la sélection",
     "Confirm settings and finish setup": "Confirmez les paramètres et terminez la configuration",

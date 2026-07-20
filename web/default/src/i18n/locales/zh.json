@@ -1027,6 +1027,7 @@
     "Confirm Payment": "确认付款",
     "Confirm reset runtime for {{count}} selected metrics?": "确认对已选 {{count}} 条指标执行重置短期指标？",
     "Confirm reset to unknown": "确认重置为未知",
+    "Confirm reset to unknown for {{count}} selected metrics?": "确认将选中的 {{count}} 条指标重置为未知？",
     "Confirm restore auto for {{count}} selected metrics?": "确认对已选 {{count}} 条指标执行恢复自动管理？",
     "Confirm Selection": "确认选择",
     "Confirm settings and finish setup": "确认设置并完成安装",

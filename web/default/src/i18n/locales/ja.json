@@ -1027,6 +1027,7 @@
     "Confirm Payment": "支払いの確認",
     "Confirm reset runtime for {{count}} selected metrics?": "Confirm reset runtime for {{count}} selected metrics?",
     "Confirm reset to unknown": "不明状態へのリセットを確認",
+    "Confirm reset to unknown for {{count}} selected metrics?": "選択した {{count}} 件のメトリクスを不明状態にリセットしますか？",
     "Confirm restore auto for {{count}} selected metrics?": "Confirm restore auto for {{count}} selected metrics?",
     "Confirm Selection": "選択の確認",
     "Confirm settings and finish setup": "設定を確認してセットアップを完了",

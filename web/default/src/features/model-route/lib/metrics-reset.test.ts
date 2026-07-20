@@ -23,6 +23,7 @@ import type { ModelRouteMetricsResponse } from '../types'
 import {
   batchMetricsActions,
   buildMetricsActionItems,
+  buildMetricsActionRequest,
   getMetricsActionErrorMessage,
   metricsRowKey,
   patchMetricsResetUnknown,
@@ -52,13 +53,8 @@ const response: ModelRouteMetricsResponse = {
 }
 
 describe('model route metrics reset helpers', () => {
-  test('places reset_unknown after restore_auto only in row actions', () => {
-    assert.deepEqual(batchMetricsActions, [
-      'force_probe',
-      'trip_open',
-      'manual_disable',
-      'restore_auto',
-    ])
+  test('shares one action definition between row and batch selectors', () => {
+    assert.equal(batchMetricsActions, rowMetricsActions)
     assert.deepEqual(rowMetricsActions, [
       'force_probe',
       'trip_open',
@@ -84,6 +80,25 @@ describe('model route metrics reset helpers', () => {
       { value: 'restore_auto', label: '恢复自动' },
       { value: 'reset_unknown', label: '重置为未知' },
     ])
+  })
+
+  test('builds exact reset requests for the selected channel and model', () => {
+    for (const channel_id of [35, 104]) {
+      assert.deepEqual(
+        buildMetricsActionRequest(
+          {
+            channel_id,
+            effective_model: 'gpt-5.5',
+          },
+          'reset_unknown'
+        ),
+        {
+          channel_id,
+          effective_model: 'gpt-5.5',
+          action: 'reset_unknown',
+        }
+      )
+    }
   })
 
   test('patches only the target row without mutating cached data', () => {

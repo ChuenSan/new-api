@@ -17,6 +17,8 @@ const newKeys = {
     'Channel manually disabled': 'Channel manually disabled',
     'Channel not found': 'Channel not found',
     'Channel unavailable': 'Channel unavailable',
+    'Confirm reset to unknown for {{count}} selected metrics?':
+      'Confirm reset to unknown for {{count}} selected metrics?',
     'Confirm reset to unknown': 'Confirm reset to unknown',
     'Failed to load enabled channels': 'Failed to load enabled channels',
     'Failed to reset state to unknown': 'Failed to reset state to unknown',
@@ -49,6 +51,8 @@ const newKeys = {
     'Channel manually disabled': '渠道已手动禁用',
     'Channel not found': '渠道不存在',
     'Channel unavailable': '渠道不可用',
+    'Confirm reset to unknown for {{count}} selected metrics?':
+      '确认将选中的 {{count}} 条指标重置为未知？',
     'Confirm reset to unknown': '确认重置为未知',
     'Failed to load enabled channels': '加载启用渠道失败',
     'Failed to reset state to unknown': '状态重置为未知失败',
@@ -80,6 +84,8 @@ const newKeys = {
     'Channel manually disabled': 'Canal désactivé manuellement',
     'Channel not found': 'Canal introuvable',
     'Channel unavailable': 'Canal indisponible',
+    'Confirm reset to unknown for {{count}} selected metrics?':
+      'Confirmer la réinitialisation à l’état inconnu de {{count}} métriques sélectionnées ?',
     'Confirm reset to unknown':
       'Confirmer la réinitialisation à l’état inconnu',
     'Failed to load enabled channels': 'Échec du chargement des canaux actifs',
@@ -114,6 +120,8 @@ const newKeys = {
     'Channel manually disabled': 'チャネルは手動無効化済み',
     'Channel not found': 'チャネルが見つかりません',
     'Channel unavailable': 'チャネルは利用不可',
+    'Confirm reset to unknown for {{count}} selected metrics?':
+      '選択した {{count}} 件のメトリクスを不明状態にリセットしますか？',
     'Confirm reset to unknown': '不明状態へのリセットを確認',
     'Failed to load enabled channels': '有効なチャネルを読み込めませんでした',
     'Failed to reset state to unknown': '状態を不明にリセットできませんでした',
@@ -146,6 +154,8 @@ const newKeys = {
     'Channel manually disabled': 'Канал отключён вручную',
     'Channel not found': 'Канал не найден',
     'Channel unavailable': 'Канал недоступен',
+    'Confirm reset to unknown for {{count}} selected metrics?':
+      'Сбросить выбранные метрики ({{count}}) в неизвестное состояние?',
     'Confirm reset to unknown': 'Подтвердить сброс в неизвестное состояние',
     'Failed to load enabled channels': 'Не удалось загрузить включённые каналы',
     'Failed to reset state to unknown':
@@ -179,6 +189,8 @@ const newKeys = {
     'Channel manually disabled': 'Kênh đã tắt thủ công',
     'Channel not found': 'Không tìm thấy kênh',
     'Channel unavailable': 'Kênh không khả dụng',
+    'Confirm reset to unknown for {{count}} selected metrics?':
+      'Xác nhận đặt lại {{count}} chỉ số đã chọn về trạng thái chưa xác định?',
     'Confirm reset to unknown': 'Xác nhận đặt lại về trạng thái chưa xác định',
     'Failed to load enabled channels': 'Không thể tải các kênh đã bật',
     'Failed to reset state to unknown':
@@ -212,6 +224,8 @@ const newKeys = {
     'Channel manually disabled': '渠道已手動停用',
     'Channel not found': '渠道不存在',
     'Channel unavailable': '渠道不可用',
+    'Confirm reset to unknown for {{count}} selected metrics?':
+      '確認將選取的 {{count}} 筆指標重設為未知？',
     'Confirm reset to unknown': '確認重設為未知',
     'Failed to load enabled channels': '載入啟用渠道失敗',
     'Failed to reset state to unknown': '狀態重設為未知失敗',

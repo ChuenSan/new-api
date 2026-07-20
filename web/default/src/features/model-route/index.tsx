@@ -23,16 +23,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -66,6 +56,7 @@ import {
   type MetricsAction,
   batchMetricsActions,
   buildMetricsActionItems,
+  buildMetricsActionRequest,
   getMetricsActionErrorMessage,
   isBatchMetricsAction,
   isMetricsAction,
@@ -225,8 +216,6 @@ export function ModelRouteAdmin() {
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchActionKey, setBatchActionKey] = useState(0)
   const [rowActionKey, setRowActionKey] = useState(0)
-  const [resetUnknownTarget, setResetUnknownTarget] =
-    useState<ModelRouteMetrics | null>(null)
   const [pendingMetricKeys, setPendingMetricKeys] = useState<Set<string>>(
     () => new Set()
   )
@@ -519,13 +508,7 @@ export function ModelRouteAdmin() {
         ['model-route-metrics'],
         (current) => patchMetricsResetUnknown(current, variables)
       )
-      setResetUnknownTarget((current) =>
-        current && metricsRowKey(current) === metricsRowKey(variables)
-          ? null
-          : current
-      )
       toast.success(t('State reset to unknown'))
-      setRowActionKey((value) => value + 1)
       void qc.invalidateQueries({ queryKey: ['model-route-metrics'] })
     },
     onError: (error: unknown) =>
@@ -540,6 +523,7 @@ export function ModelRouteAdmin() {
         next.delete(key)
         return next
       })
+      setRowActionKey((value) => value + 1)
     },
   })
 
@@ -698,19 +682,48 @@ export function ModelRouteAdmin() {
     }
   }
 
+  const runBatchMetricsAction = (
+    action: BatchMetricsAction,
+    confirmText: string
+  ) =>
+    runOnSelectedMetrics(
+      metricsActionLabels[action],
+      confirmText,
+      async (row) => {
+        if (action !== 'reset_unknown') {
+          return modelRouteMetricsAction(buildMetricsActionRequest(row, action))
+        }
+
+        const request = buildMetricsActionRequest(row, action)
+        const res = await resetModelRouteMetricsUnknown(request)
+        if (!res.success) return res
+        await qc.cancelQueries({
+          queryKey: ['model-route-metrics'],
+          exact: true,
+        })
+        qc.setQueryData<ModelRouteMetricsResponse>(
+          ['model-route-metrics'],
+          (current) => patchMetricsResetUnknown(current, row)
+        )
+        return res
+      }
+    )
+
   const isRefreshing = policyQuery.isFetching || metricsQuery.isFetching
 
-  const confirmResetUnknown = () => {
-    if (!resetUnknownTarget) return
-    const target = resetUnknownTarget
-    const key = metricsRowKey(target)
+  const handleRowMetricsAction = (
+    row: ModelRouteMetrics,
+    action: MetricsAction
+  ) => {
+    if (action !== 'reset_unknown') {
+      actionMut.mutate(buildMetricsActionRequest(row, action))
+      return
+    }
+
+    const key = metricsRowKey(row)
     if (pendingMetricKeys.has(key)) return
     setPendingMetricKeys((current) => new Set(current).add(key))
-    resetUnknownMut.mutate({
-      channel_id: target.channel_id,
-      effective_model: target.effective_model,
-      action: 'reset_unknown',
-    })
+    resetUnknownMut.mutate(buildMetricsActionRequest(row, action))
   }
 
   const handleRefresh = async () => {
@@ -904,17 +917,12 @@ export function ModelRouteAdmin() {
                         'Confirm restore auto for {{count}} selected metrics?',
                         { count: selectedMetrics.length }
                       ),
+                      reset_unknown: t(
+                        'Confirm reset to unknown for {{count}} selected metrics?',
+                        { count: selectedMetrics.length }
+                      ),
                     }
-                    void runOnSelectedMetrics(
-                      metricsActionLabels[action],
-                      confirmMap[action],
-                      (row) =>
-                        modelRouteMetricsAction({
-                          channel_id: row.channel_id,
-                          effective_model: row.effective_model,
-                          action,
-                        })
-                    )
+                    void runBatchMetricsAction(action, confirmMap[action])
                   }}
                 >
                   <SelectTrigger className='h-8 w-40'>
@@ -1123,15 +1131,7 @@ export function ModelRouteAdmin() {
                               disabled={rowSelectDisabled}
                               onValueChange={(action) => {
                                 if (!isMetricsAction(action)) return
-                                if (action === 'reset_unknown') {
-                                  setResetUnknownTarget(row)
-                                  return
-                                }
-                                actionMut.mutate({
-                                  channel_id: row.channel_id,
-                                  effective_model: row.effective_model,
-                                  action,
-                                })
+                                handleRowMetricsAction(row, action)
                               }}
                             >
                               <SelectTrigger className='h-8 w-36'>
@@ -1214,47 +1214,6 @@ export function ModelRouteAdmin() {
           </TabsContent>
         </Tabs>
       </SectionPageLayout.Content>
-      <AlertDialog
-        open={resetUnknownTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setResetUnknownTarget(null)
-            setRowActionKey((value) => value + 1)
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('Confirm reset to unknown')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                'Reset channel {{channel}} / model {{model}} to unknown? This clears backoff and lets it re-enter the production pool when other routing conditions are met. If the upstream still fails, the state machine may open it again immediately.',
-                {
-                  channel: resetUnknownTarget
-                    ? formatChannelLabel(
-                        resetUnknownTarget.channel_id,
-                        resetUnknownTarget.channel_name
-                      )
-                    : '',
-                  model: resetUnknownTarget?.effective_model || '',
-                }
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={
-                !resetUnknownTarget ||
-                pendingMetricKeys.has(metricsRowKey(resetUnknownTarget))
-              }
-              onClick={confirmResetUnknown}
-            >
-              {t('Confirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </SectionPageLayout>
   )
 }
