@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { cn } from '@/lib/utils'
 
 import {
@@ -582,6 +583,11 @@ export function ModelRouteAdmin() {
   const metrics = useMemo(() => {
     const rows = [...(metricsQuery.data?.data ?? [])]
     const filtered = rows.filter((row) => {
+      // Hide metrics for disabled or missing channels (display-layer only; data is retained).
+      if (row.channel_exists === false) return false
+      if (row.channel_status !== undefined && row.channel_status !== CHANNEL_STATUS.ENABLED) {
+        return false
+      }
       if (channelKeyword) {
         const idMatch = String(row.channel_id).includes(channelKeyword)
         const nameMatch = includesIgnoreCase(row.channel_name, channelKeyword)

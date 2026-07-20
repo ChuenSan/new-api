@@ -35,6 +35,8 @@ export type ModelRouteMetrics = {
   channel_id: number
   channel_name?: string
   base_url?: string
+  channel_status?: number
+  channel_exists?: boolean
   effective_model: string
   requested_models?: string[]
   route_state: string

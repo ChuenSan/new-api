@@ -314,6 +314,8 @@ func ListModelRouteMetrics(c *gin.Context) {
 		IsStale         bool     `json:"is_stale"`
 		ChannelName     string   `json:"channel_name"`
 		BaseURL         string   `json:"base_url"`
+		ChannelStatus   int      `json:"channel_status"`
+		ChannelExists   bool     `json:"channel_exists"`
 		RequestedModels []string `json:"requested_models"`
 	}
 	out := make([]rowView, 0, len(rows))
@@ -330,6 +332,8 @@ func ListModelRouteMetrics(c *gin.Context) {
 			IsStale:             modelroute.IsRouteStale(&rows[i], false),
 			ChannelName:         info.Name,
 			BaseURL:             info.BaseURL,
+			ChannelStatus:       info.Status,
+			ChannelExists:       info.Exists,
 			RequestedModels:     requested,
 		})
 	}
