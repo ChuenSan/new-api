@@ -1,0 +1,28 @@
+{
+  "id": "model-route-reset-unknown",
+  "name": "model-route-reset-unknown",
+  "title": "模型路由设为未知操作",
+  "description": "Add a root-only single-row action that resets one model route to UNKNOWN, preserves learning data, invalidates targeted runtime caches, and updates the UI immediately.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "baizige",
+  "assignee": "baizige",
+  "createdAt": "2026-07-20",
+  "completedAt": "2026-07-20",
+  "branch": null,
+  "base_branch": "feat/model-route-shadow-probe",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "/Users/mac/Documents/vps-conversation/模型路由-设为未知操作-设计文档.md"
+  ],
+  "notes": "",
+  "meta": {}
+}
