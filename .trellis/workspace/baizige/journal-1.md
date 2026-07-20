@@ -89,3 +89,36 @@
 
 - 用户确认后按提交约定 commit。
 
+
+
+## Session 2: 模型路由指标页隐藏禁用渠道
+
+**Date**: 2026-07-20
+**Task**: 模型路由指标页隐藏禁用渠道
+**Branch**: `feat/model-route-shadow-probe`
+
+### Summary
+
+模型路由→指标页前端过滤已禁用渠道对应的渠道模型。方案A:后端 ListModelRouteMetrics 的 rowView 补只读 channel_status/channel_exists(复用已有 channelDisplayMap,零额外查询),前端类型补字段、metrics useMemo 增加状态过滤(口径与策略页一致:channel_exists===false 或 channel_status!==ENABLED 不渲染)。仅展示层,不删数据/不改渠道/不影响调度,渠道重新启用后自然恢复。go build+相关单测+前端 tsgo 类型检查均通过。一并归档 4 个 in_progress 任务(metrics-hide-disabled/reset-unknown/api-key-channel-whitelist/token-availability-mode)。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `79eb6d52` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
