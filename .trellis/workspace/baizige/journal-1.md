@@ -28,21 +28,23 @@
 
 | Hash | Message |
 |------|---------|
-| — | 暂不提交(用户决定),改动已通过 typecheck + lint,留待手动 QA 后提交 |
+| `e9b931d3` | fix(model-route): force fresh refetch on refresh button（代码改动，+16/-10） |
+| `ef04037e` | docs(trellis): add model-route-refresh-force-refetch task artifacts（prd/design/implement + journal） |
+| `a279db33` | chore(task): archive 07-22-model-route-refresh-force-refetch（task.py archive 自动提交） |
 
 ### Testing
 
 - `tsgo -b`:退出码 0(类型检查通过,`throwOnError` 经 `RefetchOptions extends ResultOptions` 合法)。
 - `oxlint src/features/model-route/index.tsx`:退出码 0(无 warning/error)。
-- 14 Case 手测:留待 baizige 在线上后台(jp279-cpa / sgp)手动验收,重点 Case 9(连点发新请求)、Case 13(刷新 vs 重新进入一致)。
+- 14 Case 手测:已由 baizige 在线上后台验收通过,重点 Case 9(连点发新请求)、Case 13(刷新 vs 重新进入一致)确认根因消除。
 
 ### Status
 
-[OK] **代码完成,待手动 QA + 提交**
+[OK] **已完成并归档,用户验收通过**
 
 ### Next Steps
 
-- baizige 手动验收 Case 1-14 后提交并归档任务。
+- 无。任务归档于 `.trellis/tasks/archive/2026-07/07-22-model-route-refresh-force-refetch/`,session 已清空。
 
 
 
