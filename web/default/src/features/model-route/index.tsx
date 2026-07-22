@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -226,6 +226,7 @@ export function ModelRouteAdmin() {
   const [optimisticPolicyOrders, setOptimisticPolicyOrders] = useState<
     Map<string, number[]>
   >(() => new Map())
+  const refreshingRef = useRef(false)
 
   // Always load full lists; filter client-side for substring match (e.g. "4.5" → grok-4.5).
   const policyQuery = useQuery({
@@ -733,22 +734,27 @@ export function ModelRouteAdmin() {
   }
 
   const handleRefresh = async () => {
-    if (isRefreshing) return
+    if (refreshingRef.current) return
+    refreshingRef.current = true
     try {
-      const results = await Promise.all([
-        policyQuery.refetch({ cancelRefetch: false }),
-        metricsQuery.refetch({ cancelRefetch: false }),
+      await Promise.all([
+        qc.refetchQueries(
+          { queryKey: ['model-route-policies'], exact: true },
+          { cancelRefetch: true, throwOnError: true }
+        ),
+        qc.refetchQueries(
+          { queryKey: ['model-route-metrics'], exact: true },
+          { cancelRefetch: true, throwOnError: true }
+        ),
       ])
-      const failed = results.some((r) => r.isError || r.error)
-      if (failed) {
-        toast.error(t('Refresh failed'))
-        return
-      }
+      setOptimisticPolicyOrders(new Map())
       setRowActionKey((v) => v + 1)
       setBatchActionKey((v) => v + 1)
       toast.success(t('Refreshed'))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('Refresh failed'))
+    } finally {
+      refreshingRef.current = false
     }
   }
 
