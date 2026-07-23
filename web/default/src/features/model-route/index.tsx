@@ -257,17 +257,44 @@ export function ModelRouteAdmin() {
 
   const migrateMut = useMutation({
     mutationFn: migrateToModelPriority,
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       if (!res.success) {
         toast.error(res.message || t('Migration failed'))
         return
       }
-      toast.success(t('Migrated to model priority'))
-      void qc.invalidateQueries({ queryKey: ['model-route-policies'] })
-      void qc.invalidateQueries({ queryKey: ['model-route-metrics'] })
+      const data = res.data
+      const policies = data?.policies_touched ?? 0
+      const metrics = data?.metrics_touched ?? 0
+      const seeded = data?.policies_seeded ?? 0
+      const zeroed = data?.channels_zeroed ?? 0
+      toast.success(
+        t(
+          'Migrated to model priority: {{policies}} policies, {{seeded}} seeded, {{metrics}} metrics, {{zeroed}} channels zeroed',
+          { policies, seeded, metrics, zeroed }
+        )
+      )
+      try {
+        await Promise.all([
+          qc.refetchQueries(
+            { queryKey: ['model-route-policies'], exact: true },
+            { cancelRefetch: true, throwOnError: true }
+          ),
+          qc.refetchQueries(
+            { queryKey: ['model-route-metrics'], exact: true },
+            { cancelRefetch: true, throwOnError: true }
+          ),
+        ])
+        setOptimisticPolicyOrders(new Map())
+        setRowActionKey((v) => v + 1)
+        setBatchActionKey((v) => v + 1)
+      } catch {
+        // mutation already succeeded; surface refresh failure separately
+        toast.error(t('Refresh failed'))
+      }
       void qc.invalidateQueries({ queryKey: ['system-options'] })
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) =>
+      toast.error(err.message || t('Migration failed')),
   })
 
   const pruneMut = useMutation({

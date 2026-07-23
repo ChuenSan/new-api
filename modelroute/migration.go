@@ -11,9 +11,11 @@ import (
 type MigrationResult struct {
 	PoliciesTouched int               `json:"policies_touched"`
 	MetricsTouched  int               `json:"metrics_touched"`
+	PoliciesSeeded  int               `json:"policies_seeded"`
 	PoliciesPruned  int               `json:"policies_pruned"`
 	MetricsPruned   int               `json:"metrics_pruned"`
 	ChannelsZeroed  int               `json:"channels_zeroed"`
+	Mode            string            `json:"mode"`
 	Backup          []ChannelPWBackup `json:"backup,omitempty"`
 }
 
@@ -42,17 +44,18 @@ func MigrateToModelPriority() (*MigrationResult, error) {
 		})
 	}
 
-	// steps 2–5: discover + create policy/metrics
+	// steps 2–5: discover + create/seed policy/metrics (must run before channel priority zeroing)
 	var allPairs []DiscoveredModelPair
 	for _, ch := range channels {
 		allPairs = append(allPairs, DiscoverFromChannel(ch)...)
 	}
-	pCount, mCount, err := MaterializeDiscovery(allPairs)
+	pCount, mCount, seeded, err := MaterializeDiscovery(allPairs)
 	if err != nil {
 		return nil, err
 	}
 	res.PoliciesTouched = pCount
 	res.MetricsTouched = mCount
+	res.PoliciesSeeded = seeded
 
 	// prune configured/mapped policies no longer declared by channel models/mapping
 	pruneRes, err := PruneOrphanPoliciesAll(PruneOptions{})
@@ -62,7 +65,7 @@ func MigrateToModelPriority() (*MigrationResult, error) {
 	res.PoliciesPruned = pruneRes.PoliciesDeleted
 	res.MetricsPruned = pruneRes.MetricsDeleted
 
-	// steps 6–7: zero channel priority/weight
+	// steps 6–7: zero channel priority/weight after model policies absorbed them
 	for _, ch := range channels {
 		if ch == nil {
 			continue
@@ -80,16 +83,21 @@ func MigrateToModelPriority() (*MigrationResult, error) {
 		res.ChannelsZeroed++
 	}
 
-	// step 8: switch mode
+	// step 8: switch mode (persist first; in-memory only after DB ok)
 	if err := model.UpdateOption(model.RoutingPriorityModeKey, model.RoutingPriorityModeModel); err != nil {
 		return nil, err
 	}
 	SetRoutingPriorityMode(model.RoutingPriorityModeModel)
+	res.Mode = model.RoutingPriorityModeModel
 
 	// step 9: refresh caches
 	InvalidateAllRoutePlans()
 	if common.MemoryCacheEnabled {
 		model.InitChannelCache()
+	}
+	// Probe queue only meaningful under model_priority; reconcile after mode switch.
+	if err := ReconcileProbeQueueFromDB(); err != nil {
+		return nil, fmt.Errorf("reconcile probe queue: %w", err)
 	}
 	return res, nil
 }

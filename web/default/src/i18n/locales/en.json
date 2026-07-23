@@ -2632,6 +2632,7 @@
     "Migrate to model priority": "Migrate to model priority",
     "Migrate to model-level priority? This zeros channel priority/weight and enables model_priority mode.": "Migrate to model-level priority? This zeros channel priority/weight and enables model_priority mode.",
     "Migrated to model priority": "Migrated to model priority",
+    "Migrated to model priority: {{policies}} policies, {{seeded}} seeded, {{metrics}} metrics, {{zeroed}} channels zeroed": "Migrated to model priority: {{policies}} policies, {{seeded}} seeded, {{metrics}} metrics, {{zeroed}} channels zeroed",
     "Migration failed": "Migration failed",
     "min downtime": "min downtime",
     "Min Top-up": "Min Top-up",

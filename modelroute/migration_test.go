@@ -49,6 +49,74 @@ func TestMigrateToModelPriority(t *testing.T) {
 	require.NotNil(t, met)
 }
 
+// Existing zero-priority policies (lazy / incomplete prior migrate) must absorb
+// channel priority on re-migrate before channel P/W is zeroed.
+func TestMigrateToModelPrioritySeedsExistingZeroPolicies(t *testing.T) {
+	clearRouteTables(t)
+	InvalidateAllRoutePlans()
+	SetRoutingPriorityMode(model.RoutingPriorityModeChannel)
+
+	pri := int64(77)
+	w := uint(3)
+	ch := &model.Channel{
+		Id: 22, Models: "gpt-seed", Priority: &pri, Weight: &w,
+		Status: common.ChannelStatusEnabled, Key: "k", Name: "c22",
+	}
+	require.NoError(t, model.DB.Create(ch).Error)
+	require.NoError(t, model.UpsertChannelModelPolicy(&model.ChannelModelPolicy{
+		ChannelID: 22, RequestedModel: "gpt-seed", ManualPriority: 0,
+		Enabled: true, Source: model.PolicySourceLazyCreated,
+	}))
+
+	res, err := MigrateToModelPriority()
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.GreaterOrEqual(t, res.PoliciesSeeded, 1)
+	assert.Equal(t, 1, res.ChannelsZeroed)
+	assert.Equal(t, model.RoutingPriorityModeModel, res.Mode)
+	assert.True(t, IsModelPriorityMode())
+
+	pol, err := model.GetChannelModelPolicy(22, "gpt-seed")
+	require.NoError(t, err)
+	require.NotNil(t, pol)
+	assert.Equal(t, 77, pol.ManualPriority)
+
+	// idempotent re-run: no channel left to zero; priority stays
+	res2, err := MigrateToModelPriority()
+	require.NoError(t, err)
+	require.NotNil(t, res2)
+	assert.Equal(t, 0, res2.ChannelsZeroed)
+	pol2, err := model.GetChannelModelPolicy(22, "gpt-seed")
+	require.NoError(t, err)
+	require.NotNil(t, pol2)
+	assert.Equal(t, 77, pol2.ManualPriority)
+}
+
+func TestMigrateToModelPriorityPreservesNonZeroManualPriority(t *testing.T) {
+	clearRouteTables(t)
+	InvalidateAllRoutePlans()
+	SetRoutingPriorityMode(model.RoutingPriorityModeChannel)
+
+	pri := int64(50)
+	ch := &model.Channel{
+		Id: 33, Models: "gpt-keep", Priority: &pri, Status: common.ChannelStatusEnabled,
+		Key: "k", Name: "c33",
+	}
+	require.NoError(t, model.DB.Create(ch).Error)
+	require.NoError(t, model.UpsertChannelModelPolicy(&model.ChannelModelPolicy{
+		ChannelID: 33, RequestedModel: "gpt-keep", ManualPriority: 12,
+		Enabled: true, Source: model.PolicySourceConfigured,
+	}))
+
+	_, err := MigrateToModelPriority()
+	require.NoError(t, err)
+
+	pol, err := model.GetChannelModelPolicy(33, "gpt-keep")
+	require.NoError(t, err)
+	require.NotNil(t, pol)
+	assert.Equal(t, 12, pol.ManualPriority)
+}
+
 func TestResetLearningHelpers(t *testing.T) {
 	clearRouteTables(t)
 	require.NoError(t, model.UpsertChannelModelMetrics(&model.ChannelModelMetrics{
