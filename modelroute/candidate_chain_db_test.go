@@ -110,11 +110,10 @@ func TestMaterializeDiscovery(t *testing.T) {
 
 	pairs := DiscoverFromChannel(ch)
 	require.NotEmpty(t, pairs)
-	pCount, mCount, seeded, err := MaterializeDiscovery(pairs)
+	pCount, mCount, err := MaterializeDiscovery(pairs)
 	require.NoError(t, err)
 	assert.Greater(t, pCount, 0)
 	assert.Greater(t, mCount, 0)
-	assert.Equal(t, 0, seeded)
 
 	pol, err := model.GetChannelModelPolicy(5, "src")
 	require.NoError(t, err)

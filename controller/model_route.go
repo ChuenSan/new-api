@@ -33,11 +33,9 @@ func MigrateToModelPriority(c *gin.Context) {
 	recordManageAudit(c, "model_route.migrate", map[string]interface{}{
 		"policies":        res.PoliciesTouched,
 		"metrics":         res.MetricsTouched,
-		"policies_seeded": res.PoliciesSeeded,
 		"policies_pruned": res.PoliciesPruned,
 		"metrics_pruned":  res.MetricsPruned,
 		"zeroed":          res.ChannelsZeroed,
-		"mode":            res.Mode,
 	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": res})
 }

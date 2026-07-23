@@ -74,25 +74,12 @@ export async function resetModelRouteMetricsUnknown(
   return res.data
 }
 
-export type MigrateToModelPriorityResult = {
-  policies_touched: number
-  metrics_touched: number
-  policies_seeded?: number
-  policies_pruned: number
-  metrics_pruned: number
-  channels_zeroed: number
-  mode?: string
-}
-
 export async function migrateToModelPriority(): Promise<{
   success: boolean
   message: string
-  data: MigrateToModelPriorityResult
+  data: unknown
 }> {
-  const res = await api.post('/api/model_route/migrate', undefined, {
-    // large inventories can exceed default axios timeout
-    timeout: 120_000,
-  })
+  const res = await api.post('/api/model_route/migrate')
   return res.data
 }
 

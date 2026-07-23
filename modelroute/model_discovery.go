@@ -22,7 +22,7 @@ func DiscoverFromChannel(ch *model.Channel) []DiscoveredModelPair {
 		return nil
 	}
 	channelID := int64(ch.Id)
-	priority := clampModelPolicyPriority(int(ch.GetPriority()))
+	priority := int(ch.GetPriority())
 	mappingJSON := ch.GetModelMapping()
 	modelMap, _ := ParseModelMapping(mappingJSON)
 
@@ -86,65 +86,30 @@ func DiscoverAllChannelModels() ([]DiscoveredModelPair, error) {
 	return all, nil
 }
 
-// clampModelPolicyPriority keeps channel priority inside model-policy range.
-func clampModelPolicyPriority(priority int) int {
-	if priority < model.ModelPolicyPriorityMin {
-		return model.ModelPolicyPriorityMin
-	}
-	if priority > model.ModelPolicyPriorityMax {
-		return model.ModelPolicyPriorityMax
-	}
-	return priority
-}
-
 // MaterializeDiscovery writes Policy + Metrics rows for discovered pairs (PRD §4 steps 3–5 / §5).
-// Returns policies/metrics touched counts and how many existing zero-priority policies were
-// seeded from channel priority (migration-critical: Ensure does not update existing rows).
-func MaterializeDiscovery(pairs []DiscoveredModelPair) (policies int, metrics int, seeded int, err error) {
+func MaterializeDiscovery(pairs []DiscoveredModelPair) (policies int, metrics int, err error) {
 	for _, p := range pairs {
 		if p.RequestedModel == "" || p.ChannelID == 0 {
 			continue
 		}
-		desiredPriority := clampModelPolicyPriority(p.ManualPriority)
-		pol, e := model.EnsureChannelModelPolicy(p.ChannelID, p.RequestedModel, p.Source, desiredPriority)
+		pol, e := model.EnsureChannelModelPolicy(p.ChannelID, p.RequestedModel, p.Source, p.ManualPriority)
 		if e != nil {
-			return policies, metrics, seeded, e
+			return policies, metrics, e
 		}
 		if pol != nil {
+			// if newly ensured with default 0 but discovery has priority, and existing was lazy 0, keep existing
 			policies++
-			// Existing policies keep admin-set non-zero manual_priority.
-			// Zero rows (lazy_created / prior incomplete migration) get channel priority.
-			if desiredPriority != 0 && pol.ManualPriority == 0 {
-				if e := model.UpdateChannelModelPolicyManualPriority(p.ChannelID, p.RequestedModel, desiredPriority); e != nil {
-					return policies, metrics, seeded, e
-				}
-				pol.ManualPriority = desiredPriority
-				seeded++
-			}
-			// Upgrade lazy source when discovery proves models/mapping ownership.
-			if (p.Source == model.PolicySourceConfigured || p.Source == model.PolicySourceMapped) &&
-				pol.Source == model.PolicySourceLazyCreated {
-				_ = model.UpsertChannelModelPolicy(&model.ChannelModelPolicy{
-					ChannelID:      pol.ChannelID,
-					RequestedModel: pol.RequestedModel,
-					ManualPriority: pol.ManualPriority,
-					Enabled:        pol.Enabled,
-					Source:         p.Source,
-					CreatedAt:      pol.CreatedAt,
-				})
-				pol.Source = p.Source
-			}
 		}
 		effective := p.EffectiveModel
 		if effective == "" {
 			effective = p.RequestedModel
 		}
 		if _, e := model.EnsureChannelModelMetrics(p.ChannelID, effective); e != nil {
-			return policies, metrics, seeded, e
+			return policies, metrics, e
 		}
 		metrics++
 	}
-	return policies, metrics, seeded, nil
+	return policies, metrics, nil
 }
 
 // LazyEnsureForRequest ensures Policy + Metrics for a live request (PRD §5.3).
