@@ -19,16 +19,23 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import type { ModelRouteMetricsResponse } from '../types'
+import type { ModelRouteMetrics, ModelRouteMetricsResponse } from '../types'
 import {
   batchMetricsActions,
   buildMetricsActionItems,
   buildMetricsActionRequest,
+  findMetricsRowsForLog,
   getMetricsActionErrorMessage,
+  isMetricsRowVisible,
   metricsRowKey,
   patchMetricsResetUnknown,
   rowMetricsActions,
 } from './metrics-reset'
+
+// CHANNEL_STATUS.ENABLED — kept as a literal here so the test stays free of the
+// channels feature import (node --test has no path-alias loader); the runtime
+// caller passes the real constant from @/features/channels/constants.
+const ENABLED = 1
 
 const response: ModelRouteMetricsResponse = {
   success: true,
@@ -155,5 +162,117 @@ describe('model route metrics reset helpers', () => {
       getMetricsActionErrorMessage(new Error('network failed')),
       'network failed'
     )
+  })
+})
+
+describe('isMetricsRowVisible', () => {
+  test('hides rows whose channel no longer exists', () => {
+    assert.equal(
+      isMetricsRowVisible(
+        { channel_exists: false, channel_status: undefined },
+        ENABLED
+      ),
+      false
+    )
+  })
+
+  test('hides rows whose channel is not enabled', () => {
+    assert.equal(
+      isMetricsRowVisible(
+        {
+          channel_exists: true,
+          channel_status: 2,
+        },
+        ENABLED
+      ),
+      false
+    )
+  })
+
+  test('shows rows with an undefined channel_status', () => {
+    assert.equal(
+      isMetricsRowVisible(
+        { channel_exists: true, channel_status: undefined },
+        ENABLED
+      ),
+      true
+    )
+  })
+
+  test('shows rows whose channel is enabled', () => {
+    assert.equal(
+      isMetricsRowVisible(
+        { channel_exists: true, channel_status: ENABLED },
+        ENABLED
+      ),
+      true
+    )
+  })
+})
+
+describe('findMetricsRowsForLog', () => {
+  const rows: ModelRouteMetrics[] = [
+    {
+      channel_id: 16,
+      effective_model: 'grok-4.5',
+      requested_models: ['grok-4.5', 'grok-4.6'],
+      route_state: 'HEALTHY',
+    },
+    {
+      channel_id: 16,
+      effective_model: 'gpt-5',
+      requested_models: ['gpt-5'],
+      route_state: 'HEALTHY',
+    },
+    {
+      channel_id: 17,
+      effective_model: 'grok-4.5',
+      requested_models: ['grok-4.5'],
+      route_state: 'HEALTHY',
+    },
+    {
+      channel_id: 16,
+      effective_model: 'claude-opus',
+      requested_models: ['claude-opus'],
+      route_state: 'HEALTHY',
+    },
+  ]
+
+  test('returns [] when the requested model is empty', () => {
+    assert.deepEqual(findMetricsRowsForLog(rows, 16, ''), [])
+  })
+
+  test('hits a row by effective_model', () => {
+    const hits = findMetricsRowsForLog(rows, 16, 'gpt-5')
+    assert.deepEqual(
+      hits.map((r) => r.effective_model),
+      ['gpt-5']
+    )
+  })
+
+  test('hits a row by requested_models when effective_model differs', () => {
+    const hits = findMetricsRowsForLog(rows, 16, 'grok-4.6')
+    assert.deepEqual(
+      hits.map((r) => r.effective_model),
+      ['grok-4.5']
+    )
+  })
+
+  test('selects every row on the channel that declares the requested model', () => {
+    // Two rows on channel 16 both list grok-4.5 (one as effective, one in requested_models).
+    const hits = findMetricsRowsForLog(rows, 16, 'grok-4.5')
+    assert.deepEqual(
+      hits.map((r) => r.effective_model),
+      ['grok-4.5']
+    )
+  })
+
+  test('does not cross channel boundaries', () => {
+    const hits = findMetricsRowsForLog(rows, 17, 'gpt-5')
+    assert.deepEqual(hits, [])
+  })
+
+  test('returns [] when no row matches', () => {
+    assert.deepEqual(findMetricsRowsForLog(rows, 16, 'nope'), [])
   })
 })

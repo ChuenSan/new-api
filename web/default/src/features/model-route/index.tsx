@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { getRouteApi } from '@tanstack/react-router'
 import { RefreshCw, Search } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -58,9 +59,11 @@ import {
   batchMetricsActions,
   buildMetricsActionItems,
   buildMetricsActionRequest,
+  findMetricsRowsForLog,
   getMetricsActionErrorMessage,
   isBatchMetricsAction,
   isMetricsAction,
+  isMetricsRowVisible,
   metricsRowKey,
   patchMetricsResetUnknown,
   rowMetricsActions,
@@ -207,7 +210,11 @@ function matchesAnyModelSearch(
 export function ModelRouteAdmin() {
   const { t } = useTranslation()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'policies' | 'metrics'>('policies')
+  const routeApi = getRouteApi('/_authenticated/model-route/')
+  const search = routeApi.useSearch()
+  const [tab, setTab] = useState<'policies' | 'metrics'>(
+    search.tab === 'metrics' ? 'metrics' : 'policies'
+  )
   const [modelKeyword, setModelKeyword] = useState('')
   const [exactModelMatch, setExactModelMatch] = useState(false)
   const [channelFilter, setChannelFilter] = useState('')
@@ -227,6 +234,9 @@ export function ModelRouteAdmin() {
     Map<string, number[]>
   >(() => new Map())
   const refreshingRef = useRef(false)
+  // One-shot seed of selection from a log-jump deep link. Stores the seed key
+  // (channel:model) already consumed so refetches never re-seed / re-toast.
+  const seededRef = useRef<string | null>(null)
 
   // Always load full lists; filter client-side for substring match (e.g. "4.5" → grok-4.5).
   const policyQuery = useQuery({
@@ -585,10 +595,7 @@ export function ModelRouteAdmin() {
     const rows = [...(metricsQuery.data?.data ?? [])]
     const filtered = rows.filter((row) => {
       // Hide metrics for disabled or missing channels (display-layer only; data is retained).
-      if (row.channel_exists === false) return false
-      if (row.channel_status !== undefined && row.channel_status !== CHANNEL_STATUS.ENABLED) {
-        return false
-      }
+      if (!isMetricsRowVisible(row, CHANNEL_STATUS.ENABLED)) return false
       if (channelKeyword) {
         const idMatch = String(row.channel_id).includes(channelKeyword)
         const nameMatch = includesIgnoreCase(row.channel_name, channelKeyword)
@@ -613,6 +620,52 @@ export function ModelRouteAdmin() {
     () => metrics.filter((row) => selectedMetricKeys.has(metricsRowKey(row))),
     [metrics, selectedMetricKeys]
   )
+
+  // Deep link from a usage log: preselect the metrics row(s) for that
+  // channel × requested model. Runs once per seed key — the fingerprint in
+  // seededRef blocks re-seeding on every metrics refetch (and repeated
+  // toasts). Uses raw metricsQuery.data so hidden-but-present rows can be
+  // distinguished from truly-missing ones.
+  const seedKey =
+    search.channelId != null && search.model
+      ? `${search.channelId}:${search.model}`
+      : null
+
+  useEffect(() => {
+    if (!seedKey) return
+    if (seededRef.current === seedKey) return
+    if (!metricsQuery.data) return
+    const channelId = search.channelId
+    const model = search.model
+    if (channelId == null || !model) return
+    seededRef.current = seedKey
+
+    const hits = findMetricsRowsForLog(metricsQuery.data.data, channelId, model)
+    if (hits.length === 0) {
+      toast.error(
+        t('No route metrics found for channel #{{channel}} / {{model}}', {
+          channel: channelId,
+          model,
+        })
+      )
+      return
+    }
+    const visible = hits.filter((row) =>
+      isMetricsRowVisible(row, CHANNEL_STATUS.ENABLED)
+    )
+    if (visible.length === 0) {
+      toast.warning(
+        t('Channel #{{channel}} is disabled; its route metrics are hidden', {
+          channel: channelId,
+        })
+      )
+      return
+    }
+    setTab('metrics')
+    setChannelFilter('')
+    setModelKeyword('')
+    setSelectedMetricKeys(new Set(visible.map(metricsRowKey)))
+  }, [seedKey, metricsQuery.data, search.channelId, search.model, t])
 
   const allVisibleSelected =
     metrics.length > 0 && selectedMetrics.length === metrics.length

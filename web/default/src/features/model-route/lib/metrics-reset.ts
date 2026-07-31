@@ -62,6 +62,43 @@ export function metricsRowKey(
   return `${row.channel_id}:${row.effective_model}`
 }
 
+// Display-layer visibility predicate for metrics rows. Mirrors the filter in
+// ModelRouteAdmin: rows for missing or disabled channels are hidden but kept
+// in data. Single source of truth — the table filter and log-jump seed both
+// call this instead of duplicating the condition. The enabled channel status
+// value is passed in so this lib stays free of the channels feature constant.
+export function isMetricsRowVisible(
+  row: Pick<ModelRouteMetrics, 'channel_exists' | 'channel_status'>,
+  enabledChannelStatus: number
+): boolean {
+  if (row.channel_exists === false) return false
+  if (
+    row.channel_status !== undefined &&
+    row.channel_status !== enabledChannelStatus
+  ) {
+    return false
+  }
+  return true
+}
+
+// Locate the metrics rows a usage log refers to. Matches on channel id and a
+// requested model, hiting either the row's effective_model or its backend-built
+// requested_models reverse index. Exact compare — effective_model is a route
+// key. Returns all hits so multi-row matches can all be selected.
+export function findMetricsRowsForLog(
+  rows: readonly ModelRouteMetrics[],
+  channelId: number,
+  requestedModel: string
+): ModelRouteMetrics[] {
+  if (!requestedModel) return []
+  return rows.filter(
+    (row) =>
+      row.channel_id === channelId &&
+      (row.effective_model === requestedModel ||
+        (row.requested_models ?? []).includes(requestedModel))
+  )
+}
+
 export function buildMetricsActionRequest<T extends MetricsAction>(
   row: Pick<ModelRouteMetrics, 'channel_id' | 'effective_model'>,
   action: T

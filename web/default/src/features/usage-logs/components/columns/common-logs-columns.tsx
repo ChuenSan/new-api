@@ -63,6 +63,7 @@ import {
 } from '../../lib/utils'
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
+import { MetricsPreselectAction } from '../metrics-preselect-action'
 import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
 
@@ -291,7 +292,10 @@ function buildTypeDetailSegments(
   return segments
 }
 
-export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+export function useCommonLogsColumns(
+  isAdmin: boolean,
+  isSuperAdmin: boolean
+): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
   const columns: ColumnDef<UsageLog>[] = [
     {
@@ -885,6 +889,17 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       maxSize: 200,
     }
   )
+
+  if (isSuperAdmin) {
+    columns.push({
+      id: 'actions',
+      header: t('Actions'),
+      cell: ({ row }) => <MetricsPreselectAction log={row.original} />,
+      enableSorting: false,
+      enableHiding: false,
+      size: 60,
+    })
+  }
 
   return columns
 }

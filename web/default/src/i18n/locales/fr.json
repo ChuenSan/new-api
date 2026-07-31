@@ -5225,6 +5225,9 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Channel #{{channel}} is disabled; its route metrics are hidden": "Channel #{{channel}} is disabled; its route metrics are hidden",
+    "No route metrics found for channel #{{channel}} / {{model}}": "No route metrics found for channel #{{channel}} / {{model}}",
+    "Select in model route": "Select in model route"
   }
 }

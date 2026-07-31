@@ -184,6 +184,7 @@ function CommonLogsCard<TData>({
 
   const modelCell = cells.get('model_name')
   const quotaCell = cells.get('quota')
+  const actionsCell = cells.get('actions')
   const rowData = cells.get('created_at')?.row.original as
     | Record<string, unknown>
     | undefined
@@ -235,6 +236,15 @@ function CommonLogsCard<TData>({
           className='col-span-2 bg-transparent px-0 py-0'
         />
       </div>
+
+      {actionsCell && (
+        <div className='flex justify-end'>
+          {flexRender(
+            actionsCell.column.columnDef.cell,
+            actionsCell.getContext()
+          )}
+        </div>
+      )}
     </div>
   )
 }

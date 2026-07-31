@@ -17,10 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import z from 'zod'
 
 import { ModelRouteAdmin } from '@/features/model-route'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
+
+const modelRouteSearchSchema = z.object({
+  tab: z.enum(['policies', 'metrics']).optional().catch(undefined),
+  channelId: z.number().optional().catch(undefined),
+  model: z.string().optional().catch(''),
+})
 
 export const Route = createFileRoute('/_authenticated/model-route/')({
   beforeLoad: () => {
@@ -29,5 +36,6 @@ export const Route = createFileRoute('/_authenticated/model-route/')({
       throw redirect({ to: '/403' })
     }
   },
+  validateSearch: modelRouteSearchSchema,
   component: ModelRouteAdmin,
 })
