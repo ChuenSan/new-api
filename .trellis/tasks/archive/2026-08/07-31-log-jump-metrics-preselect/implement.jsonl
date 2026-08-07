@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Entry point matching, visibility predicate, and the row key must reuse existing helpers (metricsRowKey) instead of re-implementing them"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Change spans route schema, feature component, lib pure functions, logs columns, and i18n; layer boundaries must hold"}

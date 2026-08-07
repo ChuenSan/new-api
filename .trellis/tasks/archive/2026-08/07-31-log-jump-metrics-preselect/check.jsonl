@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify no duplicated model_mapping resolution and no second copy of the visibility condition"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Confirms backend stayed untouched; use as the gate if any .go file shows up in the diff"}
