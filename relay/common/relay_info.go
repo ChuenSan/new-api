@@ -41,8 +41,14 @@ type ClaudeConvertInfo struct {
 	FinishReason     string
 	Done             bool
 
-	ToolCallBaseIndex      int
-	ToolCallMaxIndexOffset int
+	// ToolBlockIndexByOpenAIIndex maps the upstream OpenAI tool_calls[].index to the
+	// locally assigned, densely-allocated Claude content_block index. The upstream
+	// index is unreliable (may not start at 0, may be non-contiguous), so Claude
+	// block indices are assigned locally in arrival order instead of base+offset.
+	ToolBlockIndexByOpenAIIndex map[int]int
+	// ToolBlockStarted records Claude block indices that have received a
+	// content_block_start, so stopOpenBlocks only closes blocks that actually exist.
+	ToolBlockStarted map[int]bool
 }
 
 type RerankerInfo struct {
@@ -359,7 +365,9 @@ func GenRelayInfoClaude(c *gin.Context, request dto.Request) *RelayInfo {
 	info.RelayFormat = types.RelayFormatClaude
 	info.ShouldIncludeUsage = false
 	info.ClaudeConvertInfo = &ClaudeConvertInfo{
-		LastMessagesType: LastMessageTypeNone,
+		LastMessagesType:            LastMessageTypeNone,
+		ToolBlockIndexByOpenAIIndex: make(map[int]int),
+		ToolBlockStarted:            make(map[int]bool),
 	}
 	info.IsClaudeBetaQuery = c.Query("beta") == "true"
 	return info
