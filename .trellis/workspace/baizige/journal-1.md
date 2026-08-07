@@ -163,3 +163,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 修复 OpenAI→Claude 流式 tool_calls index 错位(Content block not found)
+
+**Date**: 2026-08-07
+**Task**: 修复 OpenAI→Claude 流式 tool_calls index 错位(Content block not found)
+**Branch**: `fix/claude-convert-tool-index`
+
+### Summary
+
+定位并修复 Claude Code『Content block not found』:上游 tool_calls[].index 不从 0 开始时,旧 base+offset 映射产生 Claude content_block index 空洞,对未 start 块发 stop。ClaudeConvertInfo 改为 ToolBlockIndexByOpenAIIndex/ToolBlockStarted 映射,按上游 index 到达顺序稠密分配;stop 只对已 start 块;text/thinking 开块即推进 Index。新增 convert_test.go 5 用例(线上 fixture+并行/乱序/首chunk/纯文本),全量 go test 零失败。AC6 部署验证留用户。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51368b7e` | (see git log) |
+| `bfc8c342` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
