@@ -1,0 +1,30 @@
+{
+  "id": "fix-claude-convert-tool-index",
+  "name": "fix-claude-convert-tool-index",
+  "title": "修复 OpenAI→Claude 流式转换 tool_calls index 错位导致 Claude Code Content block not found",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "baizige",
+  "assignee": "baizige",
+  "createdAt": "2026-08-07",
+  "completedAt": "2026-08-07",
+  "branch": "fix/claude-convert-tool-index",
+  "base_branch": "feat/model-route-shadow-probe",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "service/convert.go",
+    "relay/common/relay_info.go",
+    "relay/channel/openai/helper.go"
+  ],
+  "notes": "代码完成:ClaudeConvertInfo 重构(ToolBlockIndexByOpenAIIndex/ToolBlockStarted 映射),StreamResponseOpenAI2Claude 工具块改为本地稠密分配,stop 只对已 start 块。新增 service/convert_test.go 5 用例全绿,全量 go test 零失败。AC6 部署验证留给用户(自建流程)。未 commit,留待用户 review。",
+  "meta": {}
+}
