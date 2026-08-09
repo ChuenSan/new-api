@@ -2,10 +2,7 @@ name: Docker build & publish (verify)
 
 on:
   push:
-    branches: [feat/model-route-shadow-probe]
-    tags:
-      - '*'
-      - '!nightly*'
+    branches: [feat/model-route-shadow-probe, codex/deep-convert-messages2chat]
   workflow_dispatch:
 
 env:
