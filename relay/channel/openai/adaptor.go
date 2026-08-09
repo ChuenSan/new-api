@@ -51,6 +51,13 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	if info != nil && info.ChannelMeta != nil {
+		info.AnthropicMessagesToOpenAIChatCompletions = info.RelayFormat == types.RelayFormatClaude &&
+			info.RelayMode == relayconstant.RelayModeChatCompletions &&
+			(info.ChannelType == constant.ChannelTypeOpenAI ||
+				info.ChannelType == constant.ChannelTypeAzure ||
+				info.ChannelType == constant.ChannelTypeOpenRouter)
+	}
 	//if !strings.Contains(request.Model, "claude") {
 	//	return nil, fmt.Errorf("you are using openai channel type with path /v1/messages, only claude model supported convert, but got %s", request.Model)
 	//}

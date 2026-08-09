@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,6 +20,9 @@ import (
 
 // 辅助函数
 func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {
+	if info == nil {
+		return fmt.Errorf("relay info is nil")
+	}
 	info.SendResponseCount++
 
 	switch info.RelayFormat {
@@ -33,6 +37,20 @@ func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string
 }
 
 func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo) error {
+	if info == nil {
+		return fmt.Errorf("relay info is nil")
+	}
+	relaycommon.EnsureClaudeConvertInfo(info)
+	if info.AnthropicMessagesToOpenAIChatCompletions {
+		if upstreamError := strictClaudeStreamError(data); upstreamError != nil {
+			if !info.ClaudeConvertInfo.StreamError {
+				info.ClaudeConvertInfo.StreamError = true
+				_ = helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: upstreamError})
+			}
+			return fmt.Errorf("upstream stream error: %s", upstreamError.Message)
+		}
+	}
+
 	var streamResponse dto.ChatCompletionsStreamResponse
 	if err := common.Unmarshal(common.StringToByteSlice(data), &streamResponse); err != nil {
 		return err
@@ -40,10 +58,31 @@ func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 
 	if streamResponse.Usage != nil {
 		info.ClaudeConvertInfo.Usage = streamResponse.Usage
+		if info.AnthropicMessagesToOpenAIChatCompletions {
+			info.ClaudeConvertInfo.HasUpstreamUsage = true
+		}
 	}
 	claudeResponses := service.StreamResponseOpenAI2Claude(&streamResponse, info)
 	for _, resp := range claudeResponses {
 		helper.ClaudeData(c, *resp)
+	}
+	return nil
+}
+
+func strictClaudeStreamError(data string) *types.ClaudeError {
+	var envelope struct {
+		Error   any    `json:"error"`
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}
+	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
+		return nil
+	}
+	if openAIError := dto.GetOpenAIError(envelope.Error); openAIError != nil && openAIError.Type != "" {
+		return &types.ClaudeError{Type: openAIError.Type, Message: openAIError.Message}
+	}
+	if envelope.Type == "error" && envelope.Message != "" {
+		return &types.ClaudeError{Type: envelope.Type, Message: envelope.Message}
 	}
 	return nil
 }
@@ -119,6 +158,9 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
 	systemFingerprint *string, model *string, usage **dto.Usage,
 	containStreamUsage *bool, info *relaycommon.RelayInfo,
 	shouldSendLastResp *bool) error {
+	if lastStreamData == "" {
+		return nil
+	}
 
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.Unmarshal(common.StringToByteSlice(lastStreamData), &lastStreamResponse); err != nil {
@@ -130,7 +172,8 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
 	*systemFingerprint = lastStreamResponse.GetSystemFingerprint()
 	*model = lastStreamResponse.Model
 
-	if service.ValidUsage(lastStreamResponse.Usage) {
+	if lastStreamResponse.Usage != nil &&
+		(info.AnthropicMessagesToOpenAIChatCompletions || service.ValidUsage(lastStreamResponse.Usage)) {
 		*containStreamUsage = true
 		*usage = lastStreamResponse.Usage
 		if !info.ShouldIncludeUsage {
@@ -146,6 +189,9 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
 func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStreamData string,
 	responseId string, createAt int64, model string, systemFingerprint string,
 	usage *dto.Usage, containStreamUsage bool) {
+	if info == nil {
+		return
+	}
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
@@ -157,6 +203,29 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		helper.Done(c)
 
 	case types.RelayFormatClaude:
+		if info.AnthropicMessagesToOpenAIChatCompletions {
+			relaycommon.EnsureClaudeConvertInfo(info)
+			state := info.ClaudeConvertInfo
+			for _, response := range service.StopOpenBlocksForFinalize(info) {
+				_ = helper.ClaudeData(c, *response)
+			}
+			if !state.StreamError && !state.HasEmittedMessageDelta {
+				stopReason := "end_turn"
+				if state.HasFinishReason {
+					stopReason = service.StrictStopReasonOpenAI2Claude(state.FinishReason)
+				}
+				_ = helper.ClaudeData(c, dto.ClaudeResponse{
+					Type:  "message_delta",
+					Usage: service.BuildClaudeUsageFromOpenAIUsage(state.Usage),
+					Delta: &dto.ClaudeMediaMessage{StopReason: &stopReason},
+				})
+				_ = helper.ClaudeData(c, dto.ClaudeResponse{Type: "message_stop"})
+				state.HasEmittedMessageDelta = true
+			}
+			state.Done = true
+			return
+		}
+
 		var streamResponse dto.ChatCompletionsStreamResponse
 		if err := common.Unmarshal(common.StringToByteSlice(lastStreamData), &streamResponse); err != nil {
 			common.SysLog("error unmarshalling stream response: " + err.Error())

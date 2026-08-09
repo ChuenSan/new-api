@@ -1,9 +1,13 @@
 package openai
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -101,6 +105,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 }
 
 func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if info == nil {
+		return nil, types.NewOpenAIError(fmt.Errorf("relay info is nil"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
 	if resp == nil || resp.Body == nil {
 		logger.LogError(c, "invalid response or response body")
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -118,6 +125,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var usage = &dto.Usage{}
 	var lastStreamData string
 	var secondLastStreamData string // 存储倒数第二个stream data，用于音频模型
+	strictClaudeStream := info.RelayFormat == types.RelayFormatClaude && info.AnthropicMessagesToOpenAIChatCompletions
 
 	// 检查是否为音频模型
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
@@ -126,6 +134,10 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		if lastStreamData != "" {
 			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
+				if strictClaudeStream {
+					sr.Stop(err)
+					return
+				}
 				sr.Error(err)
 			}
 		}
@@ -142,6 +154,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 		}
 	})
+	if strictClaudeStream && info.ClaudeConvertInfo != nil && !info.ClaudeConvertInfo.StreamError && lastStreamData != "" {
+		if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+			common.SysLog("error flushing last Claude stream chunk: " + err.Error())
+		}
+	}
 
 	// 对音频模型，从倒数第二个stream data中提取usage信息
 	if isAudioModel && secondLastStreamData != "" {
@@ -163,9 +180,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	// 处理最后的响应
 	shouldSendLastResp := true
-	if err := handleLastResponse(lastStreamData, &responseId, &createAt, &systemFingerprint, &model, &usage,
-		&containStreamUsage, info, &shouldSendLastResp); err != nil {
-		logger.LogError(c, fmt.Sprintf("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
+	if lastStreamData != "" {
+		if err := handleLastResponse(lastStreamData, &responseId, &createAt, &systemFingerprint, &model, &usage,
+			&containStreamUsage, info, &shouldSendLastResp); err != nil {
+			logger.LogError(c, fmt.Sprintf("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
+		}
 	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
@@ -180,6 +199,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
+	if strictClaudeStream && info.ClaudeConvertInfo != nil && containStreamUsage &&
+		!info.ClaudeConvertInfo.HasUpstreamUsage && info.ClaudeConvertInfo.Usage == nil {
+		info.ClaudeConvertInfo.Usage = usage
+		info.ClaudeConvertInfo.HasUpstreamUsage = true
+	}
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
@@ -213,7 +237,12 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		if !info.IsStream && info.AnthropicMessagesToOpenAIChatCompletions {
+			simpleResponse, err = aggregatePseudoSSEChatCompletion(responseBody)
+		}
+		if err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
@@ -272,6 +301,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		}
 	case types.RelayFormatClaude:
 		claudeResp := service.ResponseOpenAI2Claude(&simpleResponse, info)
+		if claudeResp == nil {
+			return nil, types.NewOpenAIError(fmt.Errorf("OpenAI chat response has no choices"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		}
 		claudeRespStr, err := common.Marshal(claudeResp)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
@@ -289,4 +321,196 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	return &simpleResponse.Usage, nil
+}
+
+type pseudoSSEToolCall struct {
+	id        string
+	typ       string
+	name      string
+	arguments strings.Builder
+}
+
+type pseudoSSEChoice struct {
+	content      strings.Builder
+	reasoning    strings.Builder
+	toolCalls    map[int]*pseudoSSEToolCall
+	finishReason string
+}
+
+func aggregatePseudoSSEChatCompletion(body []byte) (dto.OpenAITextResponse, error) {
+	var result dto.OpenAITextResponse
+	choices := make(map[int]*pseudoSSEChoice)
+	var usage *dto.Usage
+	var sawChoice, sawDone, sawFinish bool
+
+	processData := func(data string) error {
+		data = strings.TrimSpace(data)
+		if data == "" {
+			return nil
+		}
+		if data == "[DONE]" {
+			sawDone = true
+			return nil
+		}
+
+		var chunk dto.ChatCompletionsStreamResponse
+		if err := common.UnmarshalJsonStr(data, &chunk); err != nil {
+			return fmt.Errorf("invalid pseudo-SSE chunk: %w", err)
+		}
+		if upstreamError := dto.GetOpenAIError(extractPseudoSSEError(data)); upstreamError != nil && upstreamError.Type != "" {
+			return fmt.Errorf("pseudo-SSE upstream error: %s", upstreamError.Message)
+		}
+		if chunk.Id != "" && result.Id == "" {
+			result.Id = chunk.Id
+		}
+		if chunk.Object != "" && result.Object == "" {
+			result.Object = chunk.Object
+		}
+		if chunk.Model != "" && result.Model == "" {
+			result.Model = chunk.Model
+		}
+		if chunk.Created != 0 && result.Created == nil {
+			result.Created = chunk.Created
+		}
+		if chunk.Usage != nil {
+			usage = chunk.Usage
+		}
+
+		for _, chunkChoice := range chunk.Choices {
+			sawChoice = true
+			choice, ok := choices[chunkChoice.Index]
+			if !ok {
+				choice = &pseudoSSEChoice{toolCalls: make(map[int]*pseudoSSEToolCall)}
+				choices[chunkChoice.Index] = choice
+			}
+			choice.content.WriteString(chunkChoice.Delta.GetContentString())
+			choice.reasoning.WriteString(chunkChoice.Delta.GetReasoningContent())
+			if choice.finishReason == "" && chunkChoice.FinishReason != nil && *chunkChoice.FinishReason != "" {
+				choice.finishReason = *chunkChoice.FinishReason
+				sawFinish = true
+			}
+			for position, chunkToolCall := range chunkChoice.Delta.ToolCalls {
+				toolIndex := position
+				if chunkToolCall.Index != nil {
+					toolIndex = *chunkToolCall.Index
+				}
+				toolCall, ok := choice.toolCalls[toolIndex]
+				if !ok {
+					toolCall = &pseudoSSEToolCall{}
+					choice.toolCalls[toolIndex] = toolCall
+				}
+				if chunkToolCall.ID != "" {
+					toolCall.id = chunkToolCall.ID
+				}
+				if typ, ok := chunkToolCall.Type.(string); ok && typ != "" {
+					toolCall.typ = typ
+				}
+				if chunkToolCall.Function.Name != "" {
+					toolCall.name = chunkToolCall.Function.Name
+				}
+				toolCall.arguments.WriteString(chunkToolCall.Function.Arguments)
+			}
+		}
+		return nil
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	dataLines := make([]string, 0, 1)
+	flushEvent := func() error {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		data := strings.Join(dataLines, "\n")
+		dataLines = dataLines[:0]
+		return processData(data)
+	}
+	for scanner.Scan() {
+		line := strings.TrimSuffix(scanner.Text(), "\r")
+		if line == "" {
+			if err := flushEvent(); err != nil {
+				return dto.OpenAITextResponse{}, err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data:"))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return dto.OpenAITextResponse{}, fmt.Errorf("read pseudo-SSE response: %w", err)
+	}
+	if err := flushEvent(); err != nil {
+		return dto.OpenAITextResponse{}, err
+	}
+	if !sawChoice {
+		return dto.OpenAITextResponse{}, fmt.Errorf("pseudo-SSE response has no choices")
+	}
+	if !sawFinish || !sawDone {
+		return dto.OpenAITextResponse{}, fmt.Errorf("pseudo-SSE response is incomplete")
+	}
+
+	indices := make([]int, 0, len(choices))
+	for index := range choices {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	result.Choices = make([]dto.OpenAITextResponseChoice, 0, len(indices))
+	for _, index := range indices {
+		choice := choices[index]
+		message := dto.Message{}
+		if content := choice.content.String(); content != "" {
+			message.SetStringContent(content)
+		}
+		if reasoning := choice.reasoning.String(); reasoning != "" {
+			message.ReasoningContent = &reasoning
+		}
+		if len(choice.toolCalls) > 0 {
+			toolIndices := make([]int, 0, len(choice.toolCalls))
+			for toolIndex := range choice.toolCalls {
+				toolIndices = append(toolIndices, toolIndex)
+			}
+			sort.Ints(toolIndices)
+			toolCalls := make([]dto.ToolCallRequest, 0, len(toolIndices))
+			for _, toolIndex := range toolIndices {
+				toolCall := choice.toolCalls[toolIndex]
+				typ := toolCall.typ
+				if typ == "" {
+					typ = "function"
+				}
+				toolCalls = append(toolCalls, dto.ToolCallRequest{
+					ID:   toolCall.id,
+					Type: typ,
+					Function: dto.FunctionRequest{
+						Name:      toolCall.name,
+						Arguments: toolCall.arguments.String(),
+					},
+				})
+			}
+			encoded, err := json.Marshal(toolCalls)
+			if err != nil {
+				return dto.OpenAITextResponse{}, fmt.Errorf("marshal pseudo-SSE tool calls: %w", err)
+			}
+			message.ToolCalls = encoded
+		}
+		result.Choices = append(result.Choices, dto.OpenAITextResponseChoice{
+			Index:        index,
+			Message:      message,
+			FinishReason: choice.finishReason,
+		})
+	}
+	if usage != nil {
+		result.Usage = *usage
+	}
+	return result, nil
+}
+
+func extractPseudoSSEError(data string) any {
+	var envelope struct {
+		Error any `json:"error"`
+	}
+	if err := common.UnmarshalJsonStr(data, &envelope); err != nil {
+		return nil
+	}
+	return envelope.Error
 }

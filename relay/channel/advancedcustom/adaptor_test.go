@@ -47,6 +47,28 @@ func TestAdaptorUsesExactRouteAndQueryAuth(t *testing.T) {
 	assert.Equal(t, "sk-test", parsedURL.Query().Get("api_key"))
 }
 
+// TestAdaptorClaudeDeepConversionRequiresTheExactConverter prevents contract leakage to native routes.
+func TestAdaptorClaudeDeepConversionRequiresTheExactConverter(t *testing.T) {
+	for _, converter := range []string{
+		dto.AdvancedCustomConverterNone,
+		dto.AdvancedCustomConverterOpenAIChatCompletionsToAnthropicMessages,
+	} {
+		t.Run(converter, func(t *testing.T) {
+			adaptor := &Adaptor{}
+			info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+				IncomingPath: "/v1/messages", UpstreamPath: "https://upstream.example/v1/messages", Converter: converter,
+			}}})
+			info.RelayFormat = types.RelayFormatClaude
+			info.RequestURLPath = "/v1/messages"
+			_, err := adaptor.ConvertClaudeRequest(advancedCustomGinContext("/v1/messages"), info, &dto.ClaudeRequest{Model: "test"})
+			if converter == dto.AdvancedCustomConverterOpenAIChatCompletionsToAnthropicMessages {
+				require.Error(t, err)
+			}
+			assert.False(t, info.AnthropicMessagesToOpenAIChatCompletions)
+		})
+	}
+}
+
 func TestAdaptorJoinsUpstreamPathWithChannelBaseURL(t *testing.T) {
 	adaptor := &Adaptor{}
 	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
@@ -316,6 +338,26 @@ func TestAdaptorConvertsResponsesRequestToOpenAIChatUpstream(t *testing.T) {
 	parsedURL, err := url.Parse(requestURL)
 	require.NoError(t, err)
 	assert.Equal(t, "/v1/chat/completions", parsedURL.Path)
+}
+
+func TestAdaptorSetsDeepConversionOnlyForExactClaudeRoute(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: "/v1/messages",
+				UpstreamPath: "https://upstream.example/v1/chat/completions",
+				Converter:    dto.AdvancedCustomConverterAnthropicMessagesToOpenAIChatCompletions,
+			},
+		},
+	})
+	info.RelayFormat = types.RelayFormatClaude
+	info.RequestURLPath = "/v1/messages"
+	c := advancedCustomGinContext("/v1/messages")
+
+	_, err := adaptor.ConvertClaudeRequest(c, info, &dto.ClaudeRequest{Model: "test-model"})
+	require.NoError(t, err)
+	assert.True(t, info.AnthropicMessagesToOpenAIChatCompletions)
 }
 
 func advancedCustomRelayInfo(config *dto.AdvancedCustomConfig) *relaycommon.RelayInfo {

@@ -34,21 +34,47 @@ const (
 	LastMessageTypeThinking = "thinking"
 )
 
-type ClaudeConvertInfo struct {
-	LastMessagesType string
-	Index            int
-	Usage            *dto.Usage
-	FinishReason     string
-	Done             bool
+type ToolBlockState struct {
+	AnthropicIndex int
+	OpenAIIndex    int
+	ID             string
+	Name           string
+	Started        bool
+	PendingArgs    string
+}
 
-	// ToolBlockIndexByOpenAIIndex maps the upstream OpenAI tool_calls[].index to the
-	// locally assigned, densely-allocated Claude content_block index. The upstream
-	// index is unreliable (may not start at 0, may be non-contiguous), so Claude
-	// block indices are assigned locally in arrival order instead of base+offset.
+type ClaudeConvertInfo struct {
+	LastMessagesType       string
+	Index                  int
+	Usage                  *dto.Usage
+	FinishReason           string
+	Done                   bool
+	HasFinishReason        bool
+	HasEmittedMessageDelta bool
+	StreamError            bool
+	HasUpstreamUsage       bool
+
 	ToolBlockIndexByOpenAIIndex map[int]int
-	// ToolBlockStarted records Claude block indices that have received a
-	// content_block_start, so stopOpenBlocks only closes blocks that actually exist.
-	ToolBlockStarted map[int]bool
+	ToolBlockStarted            map[int]bool
+	ToolBlocks                  map[int]*ToolBlockState
+}
+
+func EnsureClaudeConvertInfo(info *RelayInfo) {
+	if info == nil {
+		return
+	}
+	if info.ClaudeConvertInfo == nil {
+		info.ClaudeConvertInfo = &ClaudeConvertInfo{LastMessagesType: LastMessageTypeNone}
+	}
+	if info.ClaudeConvertInfo.ToolBlockIndexByOpenAIIndex == nil {
+		info.ClaudeConvertInfo.ToolBlockIndexByOpenAIIndex = make(map[int]int)
+	}
+	if info.ClaudeConvertInfo.ToolBlockStarted == nil {
+		info.ClaudeConvertInfo.ToolBlockStarted = make(map[int]bool)
+	}
+	if info.ClaudeConvertInfo.ToolBlocks == nil {
+		info.ClaudeConvertInfo.ToolBlocks = make(map[int]*ToolBlockState)
+	}
 }
 
 type RerankerInfo struct {
@@ -187,6 +213,9 @@ type RelayInfo struct {
 	// 最终请求到上游的格式。可由 adaptor 显式设置；
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
 	FinalRequestRelayFormat types.RelayFormat
+	// AnthropicMessagesToOpenAIChatCompletions is set only for an Anthropic
+	// Messages request converted to a confirmed OpenAI Chat Completions upstream.
+	AnthropicMessagesToOpenAIChatCompletions bool
 
 	StreamStatus *StreamStatus
 
@@ -364,11 +393,7 @@ func GenRelayInfoClaude(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatClaude
 	info.ShouldIncludeUsage = false
-	info.ClaudeConvertInfo = &ClaudeConvertInfo{
-		LastMessagesType:            LastMessageTypeNone,
-		ToolBlockIndexByOpenAIIndex: make(map[int]int),
-		ToolBlockStarted:            make(map[int]bool),
-	}
+	EnsureClaudeConvertInfo(info)
 	info.IsClaudeBetaQuery = c.Query("beta") == "true"
 	return info
 }

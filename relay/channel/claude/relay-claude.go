@@ -1003,7 +1003,8 @@ func mapToolChoice(toolChoice any, parallelToolCalls *bool) *dto.ClaudeToolChoic
 		// When tools are disabled, parallel_tool_calls is irrelevant, so we drop it.
 		if claudeToolChoice.Type != "none" {
 			// 如果 parallel_tool_calls 为 true，则 disable_parallel_tool_use 为 false
-			claudeToolChoice.DisableParallelToolUse = !*parallelToolCalls
+			disableParallelToolUse := !*parallelToolCalls
+			claudeToolChoice.DisableParallelToolUse = &disableParallelToolUse
 		}
 	}
 

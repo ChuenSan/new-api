@@ -72,6 +72,9 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
+	if info != nil {
+		info.AnthropicMessagesToOpenAIChatCompletions = converter == dto.AdvancedCustomConverterAnthropicMessagesToOpenAIChatCompletions
+	}
 
 	switch converter {
 	case dto.AdvancedCustomConverterNone:

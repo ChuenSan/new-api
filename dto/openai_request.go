@@ -244,6 +244,7 @@ type ToolCallRequest struct {
 }
 
 type FunctionRequest struct {
+	ID          string `json:"id,omitempty"`
 	Description string `json:"description,omitempty"`
 	Name        string `json:"name"`
 	Parameters  any    `json:"parameters,omitempty"`
@@ -285,14 +286,17 @@ func (r *GeneralOpenAIRequest) ParseInput() []string {
 }
 
 type Message struct {
-	Role             string          `json:"role"`
-	Content          any             `json:"content"`
-	Name             *string         `json:"name,omitempty"`
-	Prefix           *bool           `json:"prefix,omitempty"`
-	ReasoningContent *string         `json:"reasoning_content,omitempty"`
-	Reasoning        *string         `json:"reasoning,omitempty"`
-	ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
-	ToolCallId       string          `json:"tool_call_id,omitempty"`
+	Role             string           `json:"role"`
+	Content          any              `json:"content"`
+	Name             *string          `json:"name,omitempty"`
+	Prefix           *bool            `json:"prefix,omitempty"`
+	ReasoningContent *string          `json:"reasoning_content,omitempty"`
+	Reasoning        *string          `json:"reasoning,omitempty"`
+	ReasoningDetails json.RawMessage  `json:"reasoning_details,omitempty"`
+	Refusal          *string          `json:"refusal,omitempty"`
+	ToolCalls        json.RawMessage  `json:"tool_calls,omitempty"`
+	FunctionCall     *FunctionRequest `json:"function_call,omitempty"`
+	ToolCallId       string           `json:"tool_call_id,omitempty"`
 	parsedContent    []MediaContent
 	//parsedStringContent *string
 }
@@ -300,6 +304,7 @@ type Message struct {
 type MediaContent struct {
 	Type       string `json:"type"`
 	Text       string `json:"text,omitempty"`
+	Refusal    string `json:"refusal,omitempty"`
 	ImageUrl   any    `json:"image_url,omitempty"`
 	InputAudio any    `json:"input_audio,omitempty"`
 	File       any    `json:"file,omitempty"`
@@ -434,6 +439,7 @@ type MessageVideoUrl struct {
 
 const (
 	ContentTypeText       = "text"
+	ContentTypeOutputText = "output_text"
 	ContentTypeImageURL   = "image_url"
 	ContentTypeInputAudio = "input_audio"
 	ContentTypeFile       = "file"
@@ -449,6 +455,59 @@ func (m *Message) GetReasoningContent() string {
 		return *m.ReasoningContent
 	}
 	return *m.Reasoning
+}
+
+func (m *Message) GetRefusal() string {
+	if m == nil {
+		return ""
+	}
+
+	refusals := make([]string, 0)
+	appendRefusal := func(refusal string) {
+		refusal = strings.TrimSpace(refusal)
+		if refusal == "" {
+			return
+		}
+		for _, existing := range refusals {
+			if existing == refusal {
+				return
+			}
+		}
+		refusals = append(refusals, refusal)
+	}
+	if m.Refusal != nil {
+		appendRefusal(*m.Refusal)
+	}
+
+	switch content := m.Content.(type) {
+	case []MediaContent:
+		for _, part := range content {
+			if part.Type == "refusal" {
+				appendRefusal(part.Refusal)
+			}
+		}
+	case []any:
+		for _, item := range content {
+			switch part := item.(type) {
+			case MediaContent:
+				if part.Type == "refusal" {
+					appendRefusal(part.Refusal)
+				}
+			case map[string]any:
+				if common.Interface2String(part["type"]) == "refusal" {
+					appendRefusal(common.Interface2String(part["refusal"]))
+				}
+			}
+		}
+	}
+	return strings.Join(refusals, "\n")
+}
+
+func (m *Message) ParseFunctionCall() *FunctionRequest {
+	if m == nil {
+		return nil
+	}
+	return m.FunctionCall
 }
 
 func (m *Message) GetPrefix() bool {
@@ -479,17 +538,25 @@ func (m *Message) SetToolCalls(toolCalls any) {
 }
 
 func (m *Message) StringContent() string {
-	switch m.Content.(type) {
+	switch content := m.Content.(type) {
 	case string:
-		return m.Content.(string)
+		return content
+	case []MediaContent:
+		var contentStr string
+		for _, contentItem := range content {
+			if contentItem.Type == ContentTypeText || contentItem.Type == ContentTypeOutputText {
+				contentStr += contentItem.Text
+			}
+		}
+		return contentStr
 	case []any:
 		var contentStr string
-		for _, contentItem := range m.Content.([]any) {
+		for _, contentItem := range content {
 			contentMap, ok := contentItem.(map[string]any)
 			if !ok {
 				continue
 			}
-			if contentMap["type"] == ContentTypeText {
+			if contentMap["type"] == ContentTypeText || contentMap["type"] == ContentTypeOutputText {
 				if subStr, ok := contentMap["text"].(string); ok {
 					contentStr += subStr
 				}
@@ -569,7 +636,7 @@ func (m *Message) ParseContent() []MediaContent {
 		}
 
 		switch contentType {
-		case ContentTypeText:
+		case ContentTypeText, ContentTypeOutputText:
 			if text, ok := contentItem["text"].(string); ok {
 				contentList = append(contentList, MediaContent{
 					Type: ContentTypeText,

@@ -23,6 +23,7 @@ import (
 
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
+	info.AnthropicMessagesToOpenAIChatCompletions = false
 	info.InitChannelMeta(c)
 
 	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
