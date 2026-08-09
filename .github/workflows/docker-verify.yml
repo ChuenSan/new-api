@@ -29,12 +29,12 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG_NAME="${GITHUB_REF#refs/tags/}"
-            echo "TAGS=${{ env.REGISTRY }}/$LOWNER/new-api:${TAG_NAME}" >> "$GITHUB_OUTPUT"
-            echo "PUSHING_TAG=${TAG_NAME}" >> "$GITHUB_ENV"
+            echo "tags=${{ env.REGISTRY }}/$LOWNER/new-api:${TAG_NAME}" >> "$GITHUB_OUTPUT"
           else
-            echo "TAGS=${{ env.REGISTRY }}/$LOWNER/new-api:mr-verify
-${{ env.REGISTRY }}/$LOWNER/new-api:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
-            echo "PUSHING_TAG=" >> "$GITHUB_ENV"
+            echo "tags<<_MULTILINE" >> "$GITHUB_OUTPUT"
+            echo "${{ env.REGISTRY }}/$LOWNER/new-api:mr-verify" >> "$GITHUB_OUTPUT"
+            echo "${{ env.REGISTRY }}/$LOWNER/new-api:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "_MULTILINE" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Docker Buildx
@@ -54,6 +54,6 @@ ${{ env.REGISTRY }}/$LOWNER/new-api:sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.tags.outputs.TAGS }}
+          tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
