@@ -86,7 +86,7 @@ func ClaudeToOpenAIRequest(claudeRequest dto.ClaudeRequest, info *relaycommon.Re
 			Function: dto.FunctionRequest{
 				Name:        claudeTool.Name,
 				Description: claudeTool.Description,
-				Parameters:  claudeTool.InputSchema,
+				Parameters:  normalizeClaudeToolParameters(claudeTool.InputSchema),
 			},
 		}
 		openAITools = append(openAITools, openAITool)
@@ -313,6 +313,16 @@ func claudeToOpenAIChatCompletionsRequest(claudeRequest dto.ClaudeRequest, info 
 	return &openAIRequest, nil
 }
 
+// normalizeClaudeToolParameters 保证工具 parameters 非 nil,空 schema 归一为
+// {"type":"object","properties":{}}(对齐 CC Switch 的 ensure_object_schema 兜底),
+// 避免严格上游反序列化时报 missing field `parameters`。
+func normalizeClaudeToolParameters(schema map[string]interface{}) map[string]interface{} {
+	if len(schema) == 0 {
+		return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+	}
+	return schema
+}
+
 func strictClaudeTools(raw any) ([]dto.ToolCallRequest, error) {
 	if raw == nil {
 		return nil, nil
@@ -327,12 +337,13 @@ func strictClaudeTools(raw any) ([]dto.ToolCallRequest, error) {
 			return nil, fmt.Errorf("Claude tool name is required")
 		}
 		if tool.InputSchema == nil {
-			return nil, fmt.Errorf("Claude tool %q input_schema must be an object", tool.Name)
+			tool.InputSchema = map[string]interface{}{}
 		}
 		schema := make(map[string]any, len(tool.InputSchema))
 		for key, value := range tool.InputSchema {
 			schema[key] = removeURIFormat(value)
 		}
+		schema = normalizeClaudeToolParameters(schema)
 		result = append(result, dto.ToolCallRequest{Type: "function", Function: dto.FunctionRequest{Name: tool.Name, Description: tool.Description, Parameters: schema}})
 	}
 	return result, nil

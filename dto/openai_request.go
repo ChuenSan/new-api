@@ -251,6 +251,30 @@ type FunctionRequest struct {
 	Arguments   string `json:"arguments,omitempty"`
 }
 
+// MarshalJSON 保证 function 序列化时始终携带 parameters 与 arguments 字段。
+// 部分严格上游(serde 反序列化)将二者视为必填,缺失会直接 422。
+// 兜底策略对齐 CC Switch:parameters 缺省补 {},arguments 缺省补 "{}"。
+func (r FunctionRequest) MarshalJSON() ([]byte, error) {
+	type Alias FunctionRequest
+	aux := struct {
+		Alias
+		Parameters any `json:"parameters"`
+		Arguments  any `json:"arguments"`
+	}{
+		Alias:     Alias(r),
+		Arguments: r.Arguments,
+	}
+	if r.Parameters == nil {
+		aux.Parameters = map[string]any{}
+	} else {
+		aux.Parameters = r.Parameters
+	}
+	if r.Arguments == "" {
+		aux.Arguments = "{}"
+	}
+	return json.Marshal(aux)
+}
+
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage,omitempty"`
 	// IncludeObfuscation is only for /v1/responses stream payload.
