@@ -232,3 +232,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Complete strict Anthropic Messages to Chat conversion
+
+**Date**: 2026-08-09
+**Task**: Complete strict Anthropic Messages to Chat conversion
+**Branch**: `codex/deep-convert-messages2chat`
+
+### Summary
+
+修正 disable_parallel_tool_use 可选指针语义、OpenRouter reasoning_details/effort 映射、output_text 响应解析、严格流式 EOF 工具补全与 stop reason；补齐协议隔离和请求/响应/流式验收测试。go test ./... 与 go build ./... 通过；提交 0b8f54e2，父任务已归档，08-08 流式子任务仍保持 planning。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0b8f54e2` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
