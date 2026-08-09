@@ -1,0 +1,28 @@
+{
+  "id": "messages-to-chat-deep-convert",
+  "name": "messages-to-chat-deep-convert",
+  "title": "Anthropic Messages 到 OpenAI Chat 深度转换",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "baizige",
+  "assignee": "baizige",
+  "createdAt": "2026-08-09",
+  "completedAt": "2026-08-09",
+  "branch": null,
+  "base_branch": "codex/deep-convert-messages2chat",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-08-stream-deep-convert"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

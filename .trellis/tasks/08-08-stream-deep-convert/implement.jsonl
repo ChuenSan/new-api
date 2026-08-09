@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package and layer conventions for the Go relay implementation."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Required Go testing, error, layering, and validation conventions."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Relay protocol error shaping and error propagation rules."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer stream data-flow and boundary validation checklist."}
