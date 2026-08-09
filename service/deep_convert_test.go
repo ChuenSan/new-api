@@ -224,13 +224,68 @@ func TestStopOpenBlocksForFinalizeCompletesPendingTools(t *testing.T) {
 	info := strictChatRelayInfo()
 	relaycommon.EnsureClaudeConvertInfo(info)
 	info.ClaudeConvertInfo.LastMessagesType = relaycommon.LastMessageTypeTools
-	info.ClaudeConvertInfo.ToolBlocks[2] = &relaycommon.ToolBlockState{AnthropicIndex: 2, OpenAIIndex: 7, Name: "lookup", PendingArgs: `{"q":"x"}`}
-	info.ClaudeConvertInfo.ToolBlocks[3] = &relaycommon.ToolBlockState{AnthropicIndex: 3, OpenAIIndex: 9, PendingArgs: `{"q":"discard"}`}
+	info.ClaudeConvertInfo.ToolBlocks[9] = &relaycommon.ToolBlockState{AnthropicIndex: -1, OpenAIIndex: 9, Order: 0, PendingArgs: `{"q":"discard"}`}
+	info.ClaudeConvertInfo.ToolBlocks[7] = &relaycommon.ToolBlockState{AnthropicIndex: -1, OpenAIIndex: 7, Order: 1, Name: "lookup", PendingArgs: `{"q":"x"}`}
 
 	responses := StopOpenBlocksForFinalize(info)
 	require.Len(t, responses, 3)
 	require.Equal(t, "content_block_start", responses[0].Type)
+	require.Equal(t, 0, *responses[0].Index)
 	require.Equal(t, "tool_call_7", responses[0].ContentBlock.Id)
 	require.Equal(t, "content_block_delta", responses[1].Type)
+	require.Equal(t, 0, *responses[1].Index)
 	require.Equal(t, "content_block_stop", responses[2].Type)
+	require.Equal(t, 0, *responses[2].Index)
+}
+
+// TestStreamResponseOpenAI2ClaudeStrictMultiToolsUsesDenseIndices covers a first-chunk multi-tool delta.
+func TestStreamResponseOpenAI2ClaudeStrictMultiToolsUsesDenseIndices(t *testing.T) {
+	info := strictChatRelayInfo()
+	relaycommon.EnsureClaudeConvertInfo(info)
+	info.SendResponseCount = 1
+	firstIndex, secondIndex := 4, 9
+
+	responses := StreamResponseOpenAI2Claude(&dto.ChatCompletionsStreamResponse{
+		Id: "chatcmpl_1", Model: "gpt-test",
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{
+			Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{
+				{Index: &firstIndex, ID: "call_4", Type: "function", Function: dto.FunctionResponse{Name: "first", Arguments: `{}`}},
+				{Index: &secondIndex, ID: "call_9", Type: "function", Function: dto.FunctionResponse{Name: "second", Arguments: `{"x":1}`}},
+			}},
+		}},
+	}, info)
+
+	require.Len(t, responses, 5)
+	require.Equal(t, "message_start", responses[0].Type)
+	require.Equal(t, 0, *responses[1].Index)
+	require.Equal(t, "call_4", responses[1].ContentBlock.Id)
+	require.Equal(t, 0, *responses[2].Index)
+	require.Equal(t, 1, *responses[3].Index)
+	require.Equal(t, "call_9", responses[3].ContentBlock.Id)
+	require.Equal(t, 1, *responses[4].Index)
+}
+
+// TestStreamResponseOpenAI2ClaudeStrictFinishAndUsageAreFirstAndLastWins preserves cached stream state.
+func TestStreamResponseOpenAI2ClaudeStrictFinishAndUsageAreFirstAndLastWins(t *testing.T) {
+	info := strictChatRelayInfo()
+	relaycommon.EnsureClaudeConvertInfo(info)
+	info.SendResponseCount = 1
+	stop, tools := "stop", "tool_calls"
+
+	StreamResponseOpenAI2Claude(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{FinishReason: &stop}},
+		Usage:   &dto.Usage{PromptTokens: 3, CompletionTokens: 1},
+	}, info)
+	info.SendResponseCount++
+	responses := StreamResponseOpenAI2Claude(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{FinishReason: &tools}},
+		Usage:   &dto.Usage{PromptTokens: 5, CompletionTokens: 2},
+	}, info)
+
+	require.Empty(t, responses)
+	require.True(t, info.ClaudeConvertInfo.HasFinishReason)
+	require.Equal(t, "stop", info.ClaudeConvertInfo.FinishReason)
+	require.Equal(t, 5, info.ClaudeConvertInfo.Usage.PromptTokens)
+	require.Equal(t, 2, info.ClaudeConvertInfo.Usage.CompletionTokens)
+	require.False(t, info.ClaudeConvertInfo.HasEmittedMessageDelta)
 }

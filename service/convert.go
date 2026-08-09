@@ -592,33 +592,49 @@ func StopOpenBlocksForFinalize(info *relaycommon.RelayInfo) []*dto.ClaudeRespons
 			responses = append(responses, generateStopBlock(state.Index-1))
 		}
 	case relaycommon.LastMessageTypeTools:
-		indices := make([]int, 0, len(state.ToolBlocks))
-		for index := range state.ToolBlocks {
-			indices = append(indices, index)
-		}
-		sort.Ints(indices)
-		for _, index := range indices {
-			tool := state.ToolBlocks[index]
-			if tool == nil || tool.Name == "" {
-				if tool != nil {
-					common.SysError(fmt.Sprintf("dropping pending tool call at upstream index %d without a name", tool.OpenAIIndex))
-				}
+		started := make([]*relaycommon.ToolBlockState, 0, len(state.ToolBlocks))
+		pending := make([]*relaycommon.ToolBlockState, 0, len(state.ToolBlocks))
+		for _, tool := range state.ToolBlocks {
+			if tool == nil {
 				continue
 			}
-			if !tool.Started {
-				if tool.ID == "" {
-					tool.ID = fmt.Sprintf("tool_call_%d", tool.OpenAIIndex)
-				}
-				tool.Started = true
-				state.ToolBlockStarted[index] = true
-				blockIndex := tool.AnthropicIndex
-				responses = append(responses, &dto.ClaudeResponse{Index: &blockIndex, Type: "content_block_start", ContentBlock: &dto.ClaudeMediaMessage{Id: tool.ID, Type: "tool_use", Name: tool.Name, Input: map[string]interface{}{}}})
-				if tool.PendingArgs != "" {
-					args := tool.PendingArgs
-					responses = append(responses, &dto.ClaudeResponse{Index: &blockIndex, Type: "content_block_delta", Delta: &dto.ClaudeMediaMessage{Type: "input_json_delta", PartialJson: &args}})
-				}
+			if tool.Started {
+				started = append(started, tool)
+			} else {
+				pending = append(pending, tool)
 			}
-			responses = append(responses, generateStopBlock(index))
+		}
+		sort.Slice(started, func(i, j int) bool {
+			return started[i].AnthropicIndex < started[j].AnthropicIndex
+		})
+		for _, tool := range started {
+			responses = append(responses, generateStopBlock(tool.AnthropicIndex))
+		}
+		sort.Slice(pending, func(i, j int) bool {
+			return pending[i].Order < pending[j].Order
+		})
+		for _, tool := range pending {
+			if tool.Name == "" {
+				common.SysError(fmt.Sprintf("dropping pending tool call at upstream index %d without a name", tool.OpenAIIndex))
+				continue
+			}
+			if tool.ID == "" {
+				tool.ID = fmt.Sprintf("tool_call_%d", tool.OpenAIIndex)
+			}
+			if tool.AnthropicIndex < 0 {
+				tool.AnthropicIndex = state.Index
+				state.Index++
+				state.ToolBlockIndexByOpenAIIndex[tool.OpenAIIndex] = tool.AnthropicIndex
+			}
+			tool.Started = true
+			state.ToolBlockStarted[tool.AnthropicIndex] = true
+			blockIndex := tool.AnthropicIndex
+			responses = append(responses, &dto.ClaudeResponse{Index: &blockIndex, Type: "content_block_start", ContentBlock: &dto.ClaudeMediaMessage{Id: tool.ID, Type: "tool_use", Name: tool.Name, Input: map[string]interface{}{}}})
+			if tool.PendingArgs != "" {
+				args := tool.PendingArgs
+				responses = append(responses, &dto.ClaudeResponse{Index: &blockIndex, Type: "content_block_delta", Delta: &dto.ClaudeMediaMessage{Type: "input_json_delta", PartialJson: &args}})
+			}
+			responses = append(responses, generateStopBlock(blockIndex))
 		}
 	}
 	state.ToolBlockStarted = make(map[int]bool)
@@ -657,19 +673,25 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 		responses = append(responses, &dto.ClaudeResponse{Type: "message_start", Message: message})
 	}
 	assignTool := func(openAIIndex int) *relaycommon.ToolBlockState {
-		if index, ok := state.ToolBlockIndexByOpenAIIndex[openAIIndex]; ok {
-			return state.ToolBlocks[index]
+		if tool, ok := state.ToolBlocks[openAIIndex]; ok {
+			return tool
 		}
-		index := state.Index
-		state.Index++
-		state.ToolBlockIndexByOpenAIIndex[openAIIndex] = index
-		tool := &relaycommon.ToolBlockState{AnthropicIndex: index, OpenAIIndex: openAIIndex}
-		state.ToolBlocks[index] = tool
+		tool := &relaycommon.ToolBlockState{
+			AnthropicIndex: -1,
+			OpenAIIndex:    openAIIndex,
+			Order:          len(state.ToolBlocks),
+		}
+		state.ToolBlocks[openAIIndex] = tool
 		return tool
 	}
 	emitToolStart := func(tool *relaycommon.ToolBlockState) {
 		if tool == nil || tool.Started || tool.ID == "" || tool.Name == "" {
 			return
+		}
+		if tool.AnthropicIndex < 0 {
+			tool.AnthropicIndex = state.Index
+			state.Index++
+			state.ToolBlockIndexByOpenAIIndex[tool.OpenAIIndex] = tool.AnthropicIndex
 		}
 		tool.Started = true
 		state.ToolBlockStarted[tool.AnthropicIndex] = true

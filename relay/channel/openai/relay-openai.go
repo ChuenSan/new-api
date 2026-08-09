@@ -214,6 +214,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var simpleResponse dto.OpenAITextResponse
+	var hasUpstreamUsage bool
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
@@ -238,11 +239,13 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
 		if !info.IsStream && info.AnthropicMessagesToOpenAIChatCompletions {
-			simpleResponse, err = aggregatePseudoSSEChatCompletion(responseBody)
+			simpleResponse, hasUpstreamUsage, err = aggregatePseudoSSEChatCompletion(responseBody)
 		}
 		if err != nil {
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
+	} else {
+		hasUpstreamUsage = responseHasUsage(responseBody)
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
@@ -259,6 +262,13 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	forceFormat := false
 	if info.ChannelSetting.ForceFormat {
 		forceFormat = true
+	}
+
+	strictClaudeResponse := info.RelayFormat == types.RelayFormatClaude &&
+		info.AnthropicMessagesToOpenAIChatCompletions
+	upstreamUsage := simpleResponse.Usage
+	if hasUpstreamUsage {
+		applyUsagePostProcessing(info, &upstreamUsage, responseBody)
 	}
 
 	usageModified := false
@@ -300,7 +310,16 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			break
 		}
 	case types.RelayFormatClaude:
-		claudeResp := service.ResponseOpenAI2Claude(&simpleResponse, info)
+		responseForClaude := &simpleResponse
+		if strictClaudeResponse {
+			strictResponse := simpleResponse
+			strictResponse.Usage = dto.Usage{}
+			if hasUpstreamUsage {
+				strictResponse.Usage = upstreamUsage
+			}
+			responseForClaude = &strictResponse
+		}
+		claudeResp := service.ResponseOpenAI2Claude(responseForClaude, info)
 		if claudeResp == nil {
 			return nil, types.NewOpenAIError(fmt.Errorf("OpenAI chat response has no choices"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
@@ -337,7 +356,7 @@ type pseudoSSEChoice struct {
 	finishReason string
 }
 
-func aggregatePseudoSSEChatCompletion(body []byte) (dto.OpenAITextResponse, error) {
+func aggregatePseudoSSEChatCompletion(body []byte) (dto.OpenAITextResponse, bool, error) {
 	var result dto.OpenAITextResponse
 	choices := make(map[int]*pseudoSSEChoice)
 	var usage *dto.Usage
@@ -429,7 +448,7 @@ func aggregatePseudoSSEChatCompletion(body []byte) (dto.OpenAITextResponse, erro
 		line := strings.TrimSuffix(scanner.Text(), "\r")
 		if line == "" {
 			if err := flushEvent(); err != nil {
-				return dto.OpenAITextResponse{}, err
+				return dto.OpenAITextResponse{}, false, err
 			}
 			continue
 		}
@@ -438,16 +457,16 @@ func aggregatePseudoSSEChatCompletion(body []byte) (dto.OpenAITextResponse, erro
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return dto.OpenAITextResponse{}, fmt.Errorf("read pseudo-SSE response: %w", err)
+		return dto.OpenAITextResponse{}, false, fmt.Errorf("read pseudo-SSE response: %w", err)
 	}
 	if err := flushEvent(); err != nil {
-		return dto.OpenAITextResponse{}, err
+		return dto.OpenAITextResponse{}, false, err
 	}
 	if !sawChoice {
-		return dto.OpenAITextResponse{}, fmt.Errorf("pseudo-SSE response has no choices")
+		return dto.OpenAITextResponse{}, false, fmt.Errorf("pseudo-SSE response has no choices")
 	}
-	if !sawFinish || !sawDone {
-		return dto.OpenAITextResponse{}, fmt.Errorf("pseudo-SSE response is incomplete")
+	if !sawFinish && !sawDone {
+		return dto.OpenAITextResponse{}, false, fmt.Errorf("pseudo-SSE response is incomplete")
 	}
 
 	indices := make([]int, 0, len(choices))
@@ -489,7 +508,7 @@ func aggregatePseudoSSEChatCompletion(body []byte) (dto.OpenAITextResponse, erro
 			}
 			encoded, err := json.Marshal(toolCalls)
 			if err != nil {
-				return dto.OpenAITextResponse{}, fmt.Errorf("marshal pseudo-SSE tool calls: %w", err)
+				return dto.OpenAITextResponse{}, false, fmt.Errorf("marshal pseudo-SSE tool calls: %w", err)
 			}
 			message.ToolCalls = encoded
 		}
@@ -502,7 +521,18 @@ func aggregatePseudoSSEChatCompletion(body []byte) (dto.OpenAITextResponse, erro
 	if usage != nil {
 		result.Usage = *usage
 	}
-	return result, nil
+	return result, usage != nil, nil
+}
+
+func responseHasUsage(body []byte) bool {
+	var envelope struct {
+		Usage json.RawMessage `json:"usage"`
+	}
+	if err := common.Unmarshal(body, &envelope); err != nil {
+		return false
+	}
+	usage := bytes.TrimSpace(envelope.Usage)
+	return len(usage) > 0 && !bytes.Equal(usage, []byte("null"))
 }
 
 func extractPseudoSSEError(data string) any {

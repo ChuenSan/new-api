@@ -37,6 +37,7 @@ const (
 type ToolBlockState struct {
 	AnthropicIndex int
 	OpenAIIndex    int
+	Order          int
 	ID             string
 	Name           string
 	Started        bool

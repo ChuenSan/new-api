@@ -27,8 +27,9 @@ data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":3,"function":{"argu
 data: [DONE]
 `)
 
-	response, err := aggregatePseudoSSEChatCompletion(body)
+	response, hasUsage, err := aggregatePseudoSSEChatCompletion(body)
 	require.NoError(t, err)
+	require.True(t, hasUsage)
 	require.Equal(t, "chatcmpl-1", response.Id)
 	require.Equal(t, "gpt-test", response.Model)
 	require.Len(t, response.Choices, 1)
@@ -45,10 +46,40 @@ data: [DONE]
 
 // TestAggregatePseudoSSEChatCompletionRejectsInvalidTerminalStates prevents a partial stream becoming a success response.
 func TestAggregatePseudoSSEChatCompletionRejectsInvalidTerminalStates(t *testing.T) {
-	_, err := aggregatePseudoSSEChatCompletion([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n"))
+	_, _, err := aggregatePseudoSSEChatCompletion([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n"))
 	require.Error(t, err)
 
-	_, err = aggregatePseudoSSEChatCompletion([]byte("data: {\"error\":{\"type\":\"upstream_error\",\"message\":\"failed\"}}\n\n"))
+	_, _, err = aggregatePseudoSSEChatCompletion([]byte("data: {\"error\":{\"type\":\"upstream_error\",\"message\":\"failed\"}}\n\n"))
+	require.Error(t, err)
+}
+
+// TestAggregatePseudoSSEChatCompletionAcceptsEitherCompletionSignal preserves valid EOF variants.
+func TestAggregatePseudoSSEChatCompletionAcceptsEitherCompletionSignal(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "finish reason",
+			body: "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"complete\"},\"finish_reason\":\"stop\"}]}\n\n",
+		},
+		{
+			name: "done marker",
+			body: "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"complete\"}}]}\n\ndata: [DONE]\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response, hasUsage, err := aggregatePseudoSSEChatCompletion([]byte(tt.body))
+			require.NoError(t, err)
+			require.False(t, hasUsage)
+			require.Len(t, response.Choices, 1)
+			require.Equal(t, "complete", response.Choices[0].Message.StringContent())
+		})
+	}
+
+	_, _, err := aggregatePseudoSSEChatCompletion([]byte("data: [DONE]\n\n"))
 	require.Error(t, err)
 }
 
@@ -169,4 +200,66 @@ func TestOpenaiHandlerStrictClaudeRejectsEmptyChoices(t *testing.T) {
 	require.NotNil(t, err)
 	require.Equal(t, types.ErrorCodeBadResponse, err.GetErrorCode())
 	require.Empty(t, recorder.Body.String())
+}
+
+// TestOpenaiHandlerStrictClaudeKeepsMissingUsageZero separates client usage from billing estimates.
+func TestOpenaiHandlerStrictClaudeKeepsMissingUsageZero(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	c, recorder, _, info := newStrictClaudeStreamTestContext(t, "")
+	info.IsStream = false
+	info.SetEstimatePromptTokens(13)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl-1","model":"gpt-test","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hello"}}]}`,
+		)),
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+	}
+
+	usage, err := OpenaiHandler(c, info, resp)
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	require.Equal(t, 13, usage.PromptTokens)
+
+	var response dto.ClaudeResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.NotNil(t, response.Usage)
+	require.Zero(t, response.Usage.InputTokens)
+	require.Zero(t, response.Usage.OutputTokens)
+}
+
+// TestOpenaiHandlerNonTargetDoesNotUsePseudoSSE keeps fallback isolated to strict Claude.
+func TestOpenaiHandlerNonTargetDoesNotUsePseudoSSE(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	c, recorder, _, info := newStrictClaudeStreamTestContext(t, "")
+	info.RelayFormat = types.RelayFormatOpenAI
+	info.AnthropicMessagesToOpenAIChatCompletions = false
+	info.IsStream = false
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"must not aggregate\"}}]}\n\ndata: [DONE]\n\n",
+		)),
+		Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+
+	usage, err := OpenaiHandler(c, info, resp)
+	require.Nil(t, usage)
+	require.NotNil(t, err)
+	require.Equal(t, types.ErrorCodeBadResponseBody, err.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+// TestResponseHasUsageDistinguishesMissingNullAndExplicitZero preserves field presence.
+func TestResponseHasUsageDistinguishesMissingNullAndExplicitZero(t *testing.T) {
+	require.False(t, responseHasUsage([]byte(`{"choices":[]}`)))
+	require.False(t, responseHasUsage([]byte(`{"choices":[],"usage":null}`)))
+	require.True(t, responseHasUsage([]byte(`{"choices":[],"usage":{}}`)))
+	require.True(t, responseHasUsage([]byte(`{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}`)))
 }
