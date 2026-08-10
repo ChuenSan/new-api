@@ -61,6 +61,14 @@ const (
 	flash25LiteMaxBudget = 24576
 )
 
+// geminiFunctionDeclaration 只含 Gemini 协议认识的字段;
+// OpenAI 独有的 id/arguments 一旦序列化进 functionDeclarations,上游直接 400。
+type geminiFunctionDeclaration struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+}
+
 func isNew25ProModel(modelName string) bool {
 	return strings.HasPrefix(modelName, "gemini-2.5-pro") &&
 		!strings.HasPrefix(modelName, "gemini-2.5-pro-preview-05-06") &&
@@ -367,7 +375,7 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 
 	// openaiContent.FuncToToolCalls()
 	if textRequest.Tools != nil {
-		functions := make([]dto.FunctionRequest, 0, len(textRequest.Tools))
+		functions := make([]geminiFunctionDeclaration, 0, len(textRequest.Tools))
 		googleSearch := false
 		codeExecution := false
 		urlContext := false
@@ -397,8 +405,11 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 			}
 			// Clean the parameters before appending
 			cleanedParams := cleanFunctionParameters(tool.Function.Parameters)
-			tool.Function.Parameters = cleanedParams
-			functions = append(functions, tool.Function)
+			functions = append(functions, geminiFunctionDeclaration{
+				Name:        tool.Function.Name,
+				Description: tool.Function.Description,
+				Parameters:  cleanedParams,
+			})
 		}
 		geminiTools := geminiRequest.GetTools()
 		if codeExecution {
