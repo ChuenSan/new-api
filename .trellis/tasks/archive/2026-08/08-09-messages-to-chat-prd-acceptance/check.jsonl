@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/anthropic-messages-openai-chat-conversion.md","reason":"Review strict conversion behavior against the executable contract."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review tests and project quality gates."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review upstream and stream error behavior."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review protocol isolation across request, response, stream, and finalizer boundaries."}

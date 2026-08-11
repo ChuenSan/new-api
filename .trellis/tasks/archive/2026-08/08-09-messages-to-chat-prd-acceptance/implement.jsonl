@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/anthropic-messages-openai-chat-conversion.md","reason":"Strict conversion activation, request, response, stream, and pseudo-SSE contracts."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Go testing and validation requirements."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Relay error propagation and protocol shaping."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Request-to-handler data-flow verification."}
