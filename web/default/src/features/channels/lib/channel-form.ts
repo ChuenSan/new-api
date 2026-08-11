@@ -625,7 +625,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   return JSON.stringify(settingsObj)
 }
 
-function normalizeBaseUrl(value: string | undefined): string {
+export function normalizeBaseUrl(value: string | undefined): string {
   return String(value || '')
     .trim()
     .replace(/\/+$/, '')

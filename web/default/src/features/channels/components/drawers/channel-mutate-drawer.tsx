@@ -116,10 +116,7 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
-import {
-  parseChannelConnectionInfo,
-  type ChannelConnectionInfo,
-} from '@/lib/channel-connection-info'
+import { parseChannelConnectionInfo } from '@/lib/channel-connection-info'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
@@ -133,6 +130,7 @@ import {
   getGroups,
   getPrefillGroups,
   refreshCodexCredential,
+  updateChannel,
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
@@ -158,6 +156,7 @@ import {
   getKeyPromptForType,
   parseModelsString,
   formatModelsArray,
+  normalizeBaseUrl,
   extractRedirectModels,
   extractMappingSourceModels,
   hasModelConfigChanged,
@@ -631,8 +630,9 @@ export function ChannelMutateDrawer({
   const [paramOverrideEditorOpen, setParamOverrideEditorOpen] = useState(false)
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
-  const [clipboardConnectionInfo, setClipboardConnectionInfo] =
-    useState<ChannelConnectionInfo | null>(null)
+  const [isConnectionInfoUpdating, setIsConnectionInfoUpdating] =
+    useState(false)
+  const initializedChannelIdRef = useRef<number | null>(null)
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
@@ -764,66 +764,50 @@ export function ChannelMutateDrawer({
     }
   }, [open, resetDoubaoApiUnlock])
 
-  const applyConnectionInfo = useCallback(
-    (connectionInfo: ChannelConnectionInfo) => {
-      form.setValue('key', connectionInfo.key, {
-        shouldDirty: true,
-        shouldValidate: true,
-      })
-      form.setValue('base_url', connectionInfo.url, {
-        shouldDirty: true,
-        shouldValidate: true,
-      })
-      setClipboardConnectionInfo(null)
-      toast.success(t('Connection info filled in'))
-    },
-    [form, t]
-  )
-
   const pasteConnectionInfoFromClipboard = useCallback(async () => {
+    if (!channelId || isConnectionInfoUpdating) return
+
     if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) {
       toast.error(t('Unable to read clipboard'))
       return
     }
 
+    setIsConnectionInfoUpdating(true)
     try {
       const text = await navigator.clipboard.readText()
-      const parsed = parseChannelConnectionInfo(text)
-      if (parsed) {
-        applyConnectionInfo(parsed)
+      const connectionInfo = parseChannelConnectionInfo(text)
+      if (!connectionInfo) {
+        toast.info(t('No connection info found in clipboard'))
         return
       }
-      toast.info(t('No connection info found in clipboard'))
-    } catch {
-      toast.error(t('Unable to read clipboard'))
-    }
-  }, [applyConnectionInfo, t])
 
-  useEffect(() => {
-    if (!open || isEditing) {
-      setClipboardConnectionInfo(null)
-      return
-    }
-
-    if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) {
-      return
-    }
-
-    let cancelled = false
-    void navigator.clipboard
-      .readText()
-      .then((text) => {
-        if (cancelled) return
-        setClipboardConnectionInfo(parseChannelConnectionInfo(text))
+      const normalizedBaseUrl = normalizeBaseUrl(connectionInfo.url)
+      const response = await updateChannel(channelId, {
+        key: connectionInfo.key,
+        base_url: normalizedBaseUrl,
+        key_mode: 'replace',
       })
-      .catch(() => {
-        /* Clipboard detection is best-effort on drawer open. */
-      })
+      if (!response.success) {
+        throw new Error(response.message || t(ERROR_MESSAGES.UPDATE_FAILED))
+      }
 
-    return () => {
-      cancelled = true
+      form.resetField('key', { defaultValue: connectionInfo.key })
+      form.resetField('base_url', { defaultValue: normalizedBaseUrl })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+        queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.detail(channelId),
+        }),
+      ])
+      toast.success(t('Connection info filled in'))
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t(ERROR_MESSAGES.UPDATE_FAILED)
+      )
+    } finally {
+      setIsConnectionInfoUpdating(false)
     }
-  }, [isEditing, open])
+  }, [channelId, form, isConnectionInfoUpdating, queryClient, t])
 
   // Helper computed values
   const isBatchMode =
@@ -1219,6 +1203,10 @@ export function ChannelMutateDrawer({
   // Load channel data into form when editing
   useEffect(() => {
     if (isEditing && channelData?.data) {
+      if (!channelId || channelData.data.id !== channelId) return
+      if (initializedChannelIdRef.current === channelData.data.id) return
+      initializedChannelIdRef.current = channelData.data.id
+
       const defaults = transformChannelToFormDefaults(channelData.data)
       form.reset(defaults)
       setAdvancedSettingsOpen(
@@ -1232,13 +1220,14 @@ export function ChannelMutateDrawer({
       initialStatusCodeMappingRef.current =
         channelData.data.status_code_mapping || ''
     } else if (!isEditing) {
+      initializedChannelIdRef.current = null
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelData, form])
+  }, [isEditing, channelData, form, channelId])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -1809,7 +1798,7 @@ export function ChannelMutateDrawer({
         setActiveEditorSectionId(CHANNEL_EDITOR_SECTION_IDS.identity)
         setExpandedEditorNavItemId(undefined)
         setAdvancedSettingsOpen(false)
-        setClipboardConnectionInfo(null)
+        initializedChannelIdRef.current = null
       }
     },
     [onOpenChange, form]
@@ -1843,15 +1832,20 @@ export function ChannelMutateDrawer({
                       )}
                 </SheetDescription>
               </div>
-              {!isEditing && (
+              {isEditing && canEditSensitive && (
                 <Button
                   type='button'
                   variant='outline'
                   size='sm'
                   className='shrink-0'
+                  disabled={isChannelDetailLoading || isConnectionInfoUpdating}
                   onClick={pasteConnectionInfoFromClipboard}
                 >
-                  <ClipboardPaste className='size-4' />
+                  {isConnectionInfoUpdating ? (
+                    <Loader2 className='size-4 animate-spin' />
+                  ) : (
+                    <ClipboardPaste className='size-4' />
+                  )}
                   <span>{t('Paste Connection Info')}</span>
                 </Button>
               )}
@@ -1867,31 +1861,6 @@ export function ChannelMutateDrawer({
                 {t(
                   'You can still edit non-sensitive operations fields such as models, groups, priority, and weight.'
                 )}
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {!isEditing && clipboardConnectionInfo && (
-            <Alert>
-              <AlertDescription className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                <span>{t('Connection info detected in clipboard')}</span>
-                <span className='flex shrink-0 gap-2'>
-                  <Button
-                    type='button'
-                    size='sm'
-                    onClick={() => applyConnectionInfo(clipboardConnectionInfo)}
-                  >
-                    {t('Fill in')}
-                  </Button>
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='sm'
-                    onClick={() => setClipboardConnectionInfo(null)}
-                  >
-                    {t('Ignore')}
-                  </Button>
-                </span>
               </AlertDescription>
             </Alert>
           )}
