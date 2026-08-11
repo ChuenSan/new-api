@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { normalizeExternalUrl } from '@/lib/external-url'
 import { cn } from '@/lib/utils'
 
 import {
@@ -97,18 +98,6 @@ function formatChannelLabel(channelId: number, channelName?: string) {
   const name = (channelName || '').trim()
   if (name) return `${name} (#${channelId})`
   return `#${channelId}`
-}
-
-function normalizeExternalUrl(raw?: string) {
-  const value = (raw || '').trim()
-  if (!value) return ''
-  if (/^https?:\/\//i.test(value)) return value
-  if (value.startsWith('//')) return `https:${value}`
-  // bare host / path-like base_url from channel config
-  if (/^[a-z0-9.-]+\.[a-z]{2,}([/:].*)?$/i.test(value)) {
-    return `https://${value}`
-  }
-  return ''
 }
 
 function ChannelNameLink({

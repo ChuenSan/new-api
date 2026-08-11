@@ -1,0 +1,9 @@
+{
+  "Apply \"{{action}}\" to {{count}} selected metrics?": "Apply \"{{action}}\" to {{count}} selected metrics?",
+  "Experience first favors EMA experience scores within the same priority band.": "Experience first favors EMA experience scores within the same priority band.",
+  "Migrate to model priority": "Migrate to model priority",
+  "Migrate to model-level priority? This zeros channel priority/weight and enables model_priority mode.": "Migrate to model-level priority? This zeros channel priority/weight and enables model_priority mode.",
+  "Migrated to model priority": "Migrated to model priority",
+  "Model priority uses channel_model_policy/metrics and CandidateChain; legacy keeps channels.priority/weight.": "Model priority uses channel_model_policy/metrics and CandidateChain; legacy keeps channels.priority/weight.",
+  "Priority swapped with {{channel}}": "Priority swapped with {{channel}}"
+}

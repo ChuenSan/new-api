@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/popover'
 import { NumericSpinnerInput } from '@/features/channels/components/numeric-spinner-input'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { normalizeExternalUrl } from '@/lib/external-url'
 import { cn } from '@/lib/utils'
 
 import { movePolicyWithinGroup, suggestTopPriority } from '../lib/policy-order'
@@ -70,17 +71,6 @@ function formatChannelLabel(policy: ModelRoutePolicy) {
   const name = (policy.channel_name || '').trim()
   if (name) return `${name} (#${policy.channel_id})`
   return `#${policy.channel_id}`
-}
-
-function normalizeExternalUrl(raw?: string) {
-  const value = (raw || '').trim()
-  if (!value) return ''
-  if (/^https?:\/\//i.test(value)) return value
-  if (value.startsWith('//')) return `https:${value}`
-  if (/^[a-z0-9.-]+\.[a-z]{2,}([/:].*)?$/i.test(value)) {
-    return `https://${value}`
-  }
-  return ''
 }
 
 function getPolicyChannelStatus(policy: ModelRoutePolicy) {

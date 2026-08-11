@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils'
 
 import { formatDuration } from '../../lib/format'
 import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
+import { ChannelLinkBadge } from './channel-link-badge'
 
 /**
  * Cache tooltip component for token display
@@ -179,14 +180,11 @@ export function createChannelColumn<T>(config: {
       if (!channelId) {
         return <span className='text-muted-foreground/60 text-xs'>-</span>
       }
+      const log = row.original as { channel_base_url?: string }
       return (
-        <StatusBadge
-          label={`#${channelId}`}
-          autoColor={String(channelId)}
-          copyText={String(channelId)}
-          size='sm'
-          showDot={false}
-          className='font-mono'
+        <ChannelLinkBadge
+          channelId={channelId}
+          baseUrl={log.channel_base_url}
         />
       )
     },

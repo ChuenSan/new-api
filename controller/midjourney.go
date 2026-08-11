@@ -306,6 +306,19 @@ func GetAllMidjourney(c *gin.Context) {
 
 	items := model.GetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.CountAllTasks(queryParams)
+	channelIDs := make([]int, 0, len(items))
+	for _, item := range items {
+		channelIDs = append(channelIDs, item.ChannelId)
+	}
+	channelDisplayInfos, err := model.GetChannelDisplayInfos(channelIDs)
+	if err != nil {
+		logger.LogError(c.Request.Context(), "failed to resolve midjourney channel display information: "+err.Error())
+	}
+	for _, item := range items {
+		if channel, ok := channelDisplayInfos[item.ChannelId]; ok {
+			item.ChannelBaseURL = channel.BaseURL
+		}
+	}
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {

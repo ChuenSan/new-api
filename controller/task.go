@@ -62,6 +62,7 @@ func GetUserTask(c *gin.Context) {
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 	var userIdMap map[int]*model.UserBase
+	var channelDisplayInfos map[int]model.ChannelDisplayInfo
 	if fillUser {
 		userIdMap = make(map[int]*model.UserBase)
 		userIds := types.NewSet[int]()
@@ -74,6 +75,16 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 				userIdMap[userId] = cacheUser
 			}
 		}
+
+		channelIDs := make([]int, 0, len(tasks))
+		for _, task := range tasks {
+			channelIDs = append(channelIDs, task.ChannelId)
+		}
+		var err error
+		channelDisplayInfos, err = model.GetChannelDisplayInfos(channelIDs)
+		if err != nil {
+			common.SysError("failed to resolve task channel display information: " + err.Error())
+		}
 	}
 	result := make([]*dto.TaskDto, len(tasks))
 	for i, task := range tasks {
@@ -83,6 +94,9 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 			}
 		}
 		result[i] = relay.TaskModel2Dto(task)
+		if channel, ok := channelDisplayInfos[task.ChannelId]; ok {
+			result[i].ChannelBaseURL = channel.BaseURL
+		}
 	}
 	return result
 }

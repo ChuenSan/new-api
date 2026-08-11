@@ -72,6 +72,7 @@ type Log struct {
 	IsStream          bool   `json:"is_stream"`
 	ChannelId         int    `json:"channel" gorm:"index"`
 	ChannelName       string `json:"channel_name" gorm:"->"`
+	ChannelBaseURL    string `json:"channel_base_url,omitempty" gorm:"-"`
 	TokenId           int    `json:"token_id" gorm:"default:0;index"`
 	Group             string `json:"group" gorm:"index"`
 	Ip                string `json:"ip" gorm:"index;default:''"`
@@ -524,35 +525,15 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 
 	if channelIds.Len() > 0 {
-		var channels []struct {
-			Id   int    `gorm:"column:id"`
-			Name string `gorm:"column:name"`
-		}
-		if common.MemoryCacheEnabled {
-			// Cache get channel
-			for _, channelId := range channelIds.Items() {
-				if cacheChannel, err := CacheGetChannel(channelId); err == nil {
-					channels = append(channels, struct {
-						Id   int    `gorm:"column:id"`
-						Name string `gorm:"column:name"`
-					}{
-						Id:   channelId,
-						Name: cacheChannel.Name,
-					})
-				}
-			}
-		} else {
-			// Bulk query channels from DB
-			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
-				return logs, total, err
-			}
-		}
-		channelMap := make(map[int]string, len(channels))
-		for _, channel := range channels {
-			channelMap[channel.Id] = channel.Name
+		channelDisplayInfos, displayErr := GetChannelDisplayInfos(channelIds.Items())
+		if displayErr != nil {
+			logger.LogError(context.Background(), "failed to resolve log channel display information: "+displayErr.Error())
 		}
 		for i := range logs {
-			logs[i].ChannelName = channelMap[logs[i].ChannelId]
+			if channel, ok := channelDisplayInfos[logs[i].ChannelId]; ok {
+				logs[i].ChannelName = channel.Name
+				logs[i].ChannelBaseURL = channel.BaseURL
+			}
 		}
 	}
 

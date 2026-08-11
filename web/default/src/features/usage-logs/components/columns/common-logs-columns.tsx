@@ -66,6 +66,7 @@ import { DetailsDialog } from '../dialogs/details-dialog'
 import { MetricsPreselectAction } from '../metrics-preselect-action'
 import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
+import { ChannelLinkBadge } from './channel-link-badge'
 
 interface DetailSegment {
   text: string
@@ -374,13 +375,9 @@ export function useCommonLogsColumns(
                   }
                 >
                   <div className='relative inline-flex w-fit items-center gap-1'>
-                    <StatusBadge
-                      label={channelIdDisplay}
-                      autoColor={String(log.channel)}
-                      copyText={String(log.channel)}
-                      size='sm'
-                      showDot={false}
-                      className='font-mono'
+                    <ChannelLinkBadge
+                      channelId={log.channel}
+                      baseUrl={log.channel_base_url}
                     />
                     {showMultiKeyIndex && (
                       <StatusBadge

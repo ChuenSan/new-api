@@ -1,0 +1,5 @@
+{
+  "Channel #{{channel}} is disabled; its route metrics are hidden": "Channel #{{channel}} is disabled; its route metrics are hidden",
+  "No route metrics found for channel #{{channel}} / {{model}}": "No route metrics found for channel #{{channel}} / {{model}}",
+  "Select in model route": "Select in model route"
+}

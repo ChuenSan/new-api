@@ -1,0 +1,148 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
+const LOCALES_DIR = path.resolve('src/i18n/locales')
+
+function stableStringify(obj) {
+  return JSON.stringify(obj, null, 2) + '\n'
+}
+
+const newKeys = {
+  en: {
+    '{{count}} routes': '{{count}} routes',
+    'Clear the channel filter to reorder the complete model group.': 'Clear the channel filter to reorder the complete model group.',
+    'Drag to reorder': 'Drag to reorder',
+    'Multiple routes use that priority. Reorder this model group first.': 'Multiple routes use that priority. Reorder this model group first.',
+    'No priority space remains for this move. Adjust a priority manually first.': 'No priority space remains for this move. Adjust a priority manually first.',
+    'Policies changed elsewhere. Latest data has been loaded.': 'Policies changed elsewhere. Latest data has been loaded.',
+    'Priorities swapped': 'Priorities swapped',
+    'Reorder': 'Reorder',
+    'Reorder failed': 'Reorder failed',
+    'Review or edit the suggested priority before applying it.': 'Review or edit the suggested priority before applying it.',
+    'Route order updated': 'Route order updated',
+    'Set as first': 'Set as first',
+    'The maximum priority is already in use': 'The maximum priority is already in use',
+  },
+  zh: {
+    '{{count}} routes': '{{count}} 条路由',
+    'Clear the channel filter to reorder the complete model group.': '清除渠道筛选后才能对完整模型组排序。',
+    'Drag to reorder': '拖拽排序',
+    'Multiple routes use that priority. Reorder this model group first.': '多条路由使用了该优先级，请先对此模型组进行拖拽排序。',
+    'No priority space remains for this move. Adjust a priority manually first.': '此次移动没有可用的优先级空间，请先手动调整优先级。',
+    'Policies changed elsewhere. Latest data has been loaded.': '策略已被其他操作修改，已加载最新数据。',
+    'Priorities swapped': '优先级已交换',
+    'Reorder': '排序',
+    'Reorder failed': '排序失败',
+    'Review or edit the suggested priority before applying it.': '应用前请检查或编辑建议的优先级。',
+    'Route order updated': '路由顺序已更新',
+    'Set as first': '设为第一',
+    'The maximum priority is already in use': '已达到最高优先级',
+  },
+  fr: {
+    '{{count}} routes': '{{count}} routes',
+    'Clear the channel filter to reorder the complete model group.': 'Effacez le filtre de canal pour réordonner tout le groupe.',
+    'Drag to reorder': 'Glisser pour réordonner',
+    'Multiple routes use that priority. Reorder this model group first.': 'Plusieurs routes ont cette priorité. Réordonnez d’abord ce groupe.',
+    'No priority space remains for this move. Adjust a priority manually first.': 'Aucun espace de priorité pour ce déplacement. Ajustez d’abord une priorité.',
+    'Policies changed elsewhere. Latest data has been loaded.': 'Les stratégies ont changé ailleurs. Les données récentes sont chargées.',
+    'Priorities swapped': 'Priorités échangées',
+    'Reorder': 'Réordonner',
+    'Reorder failed': 'Échec du réordonnancement',
+    'Review or edit the suggested priority before applying it.': 'Vérifiez ou modifiez la priorité proposée avant de l’appliquer.',
+    'Route order updated': 'Ordre des routes mis à jour',
+    'Set as first': 'Placer en premier',
+    'The maximum priority is already in use': 'La priorité maximale est déjà utilisée',
+  },
+  ja: {
+    '{{count}} routes': '{{count}} 件のルート',
+    'Clear the channel filter to reorder the complete model group.': 'モデルグループ全体を並べ替えるには、チャネルフィルターを解除してください。',
+    'Drag to reorder': 'ドラッグして並べ替え',
+    'Multiple routes use that priority. Reorder this model group first.': '複数のルートが同じ優先度です。先にこのモデルグループを並べ替えてください。',
+    'No priority space remains for this move. Adjust a priority manually first.': 'この移動に使える優先度がありません。先に優先度を手動で調整してください。',
+    'Policies changed elsewhere. Latest data has been loaded.': 'ポリシーが別の操作で変更されました。最新データを読み込みました。',
+    'Priorities swapped': '優先度を入れ替えました',
+    'Reorder': '並べ替え',
+    'Reorder failed': '並べ替えに失敗しました',
+    'Review or edit the suggested priority before applying it.': '適用前に推奨優先度を確認または編集してください。',
+    'Route order updated': 'ルート順を更新しました',
+    'Set as first': '先頭に設定',
+    'The maximum priority is already in use': '最大優先度はすでに使用されています',
+  },
+  ru: {
+    '{{count}} routes': '{{count}} маршрутов',
+    'Clear the channel filter to reorder the complete model group.': 'Очистите фильтр каналов, чтобы изменить порядок всей группы моделей.',
+    'Drag to reorder': 'Перетащить для сортировки',
+    'Multiple routes use that priority. Reorder this model group first.': 'Этот приоритет занят несколькими маршрутами. Сначала упорядочьте группу.',
+    'No priority space remains for this move. Adjust a priority manually first.': 'Для перемещения нет свободного приоритета. Сначала измените приоритет вручную.',
+    'Policies changed elsewhere. Latest data has been loaded.': 'Политики были изменены. Загружены актуальные данные.',
+    'Priorities swapped': 'Приоритеты обменены',
+    'Reorder': 'Изменить порядок',
+    'Reorder failed': 'Не удалось изменить порядок',
+    'Review or edit the suggested priority before applying it.': 'Проверьте или измените предложенный приоритет перед применением.',
+    'Route order updated': 'Порядок маршрутов обновлён',
+    'Set as first': 'Сделать первым',
+    'The maximum priority is already in use': 'Максимальный приоритет уже используется',
+  },
+  vi: {
+    '{{count}} routes': '{{count}} tuyến',
+    'Clear the channel filter to reorder the complete model group.': 'Xóa bộ lọc kênh để sắp xếp lại toàn bộ nhóm mô hình.',
+    'Drag to reorder': 'Kéo để sắp xếp',
+    'Multiple routes use that priority. Reorder this model group first.': 'Nhiều tuyến đang dùng mức ưu tiên này. Hãy sắp xếp nhóm mô hình trước.',
+    'No priority space remains for this move. Adjust a priority manually first.': 'Không còn khoảng ưu tiên cho thao tác này. Hãy chỉnh ưu tiên thủ công trước.',
+    'Policies changed elsewhere. Latest data has been loaded.': 'Chính sách đã được thay đổi ở nơi khác. Dữ liệu mới nhất đã được tải.',
+    'Priorities swapped': 'Đã hoán đổi ưu tiên',
+    'Reorder': 'Sắp xếp lại',
+    'Reorder failed': 'Sắp xếp lại thất bại',
+    'Review or edit the suggested priority before applying it.': 'Kiểm tra hoặc sửa mức ưu tiên đề xuất trước khi áp dụng.',
+    'Route order updated': 'Đã cập nhật thứ tự tuyến',
+    'Set as first': 'Đặt lên đầu',
+    'The maximum priority is already in use': 'Mức ưu tiên tối đa đã được sử dụng',
+  },
+  'zh-TW': {
+    '{{count}} routes': '{{count}} 條路由',
+    'Clear the channel filter to reorder the complete model group.': '清除渠道篩選後才能對完整模型組排序。',
+    'Drag to reorder': '拖曳排序',
+    'Multiple routes use that priority. Reorder this model group first.': '多條路由使用了該優先級，請先對此模型組進行拖曳排序。',
+    'No priority space remains for this move. Adjust a priority manually first.': '此次移動沒有可用的優先級空間，請先手動調整優先級。',
+    'Policies changed elsewhere. Latest data has been loaded.': '策略已被其他操作修改，已載入最新資料。',
+    'Priorities swapped': '優先級已交換',
+    'Reorder': '排序',
+    'Reorder failed': '排序失敗',
+    'Review or edit the suggested priority before applying it.': '套用前請檢查或編輯建議的優先級。',
+    'Route order updated': '路由順序已更新',
+    'Set as first': '設為第一',
+    'The maximum priority is already in use': '已達到最高優先級',
+  },
+}
+
+async function main() {
+  let totalAdded = 0
+
+  for (const [locale, trans] of Object.entries(newKeys)) {
+    const filePath = path.join(LOCALES_DIR, `${locale}.json`)
+    const json = JSON.parse(await fs.readFile(filePath, 'utf8'))
+
+    let count = 0
+    for (const [key, value] of Object.entries(trans)) {
+      if (!Object.prototype.hasOwnProperty.call(json.translation, key)) {
+        json.translation[key] = value
+        count++
+      } else if (json.translation[key] !== value) {
+        json.translation[key] = value
+        count++
+      }
+    }
+
+    json.translation = Object.fromEntries(
+      Object.entries(json.translation).sort(([a], [b]) => a.localeCompare(b))
+    )
+    await fs.writeFile(filePath, stableStringify(json), 'utf8')
+
+    console.log(`${locale}: ${count} translations applied`)
+    totalAdded += count
+  }
+
+  console.log(`\nTotal: ${totalAdded} translations applied`)
+}
+
+main().catch((err) => { console.error(err); process.exitCode = 1 })

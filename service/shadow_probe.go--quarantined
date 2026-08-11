@@ -1,0 +1,417 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/modelroute"
+	"github.com/QuantumNous/new-api/relay"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/types"
+
+	"github.com/gin-gonic/gin"
+	"github.com/samber/lo"
+)
+
+var shadowWireOnce sync.Once
+
+// EnsureBilledShadowExecutor installs a shadow executor that goes through the normal
+// channel adaptor path so the upstream provider bills like a real request.
+// Internal user quota is not pre-consumed (same spirit as channel test logging).
+func EnsureBilledShadowExecutor() {
+	shadowWireOnce.Do(func() {
+		modelroute.EnsureDefaultShadowWiring()
+		if modelroute.GlobalShadowDispatcher != nil {
+			modelroute.GlobalShadowDispatcher.Executor = BilledRelayShadowExecutor
+			modelroute.GlobalShadowDispatcher.Builder = modelroute.TextShadowBuilder{}
+		}
+		modelroute.WireShadowExecutor = EnsureBilledShadowExecutor
+	})
+	// allow re-bind if tests cleared executor
+	if modelroute.GlobalShadowDispatcher != nil && modelroute.GlobalShadowDispatcher.Executor == nil {
+		modelroute.GlobalShadowDispatcher.Executor = BilledRelayShadowExecutor
+	}
+}
+
+func init() {
+	// register wiring hook as soon as service package loads
+	modelroute.WireShadowExecutor = EnsureBilledShadowExecutor
+}
+
+// BilledRelayShadowExecutor probes via adaptor.DoRequest with a full (non-ping-simplified)
+// chat body derived from the production capture / ShadowRequest messages.
+func BilledRelayShadowExecutor(ctx context.Context, req *modelroute.ShadowRequest) modelroute.ShadowResult {
+	out := modelroute.ShadowResult{BuildResult: modelroute.ShadowTransportFailure, TransportOK: false}
+	if req == nil || req.ChannelID <= 0 {
+		return out
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ch, err := loadChannelForBilledShadow(int(req.ChannelID))
+	if err != nil || ch == nil || ch.Status != common.ChannelStatusEnabled {
+		return out
+	}
+
+	capture := modelroute.LookupShadowCapture(req.SourceRequestIDHint(), req.RequestedModel)
+	userID := 0
+	group := "default"
+	tokenName := "影子探测"
+	tokenID := 0
+	requestID := ""
+	if capture != nil {
+		userID = capture.UserID
+		if capture.Group != "" {
+			group = capture.Group
+		}
+		if capture.TokenName != "" {
+			tokenName = capture.TokenName
+		}
+		tokenID = capture.TokenID
+		requestID = capture.RequestID
+	}
+	if userID <= 0 {
+		// fall back to root so context/group still work (quota not deducted)
+		var root model.User
+		if e := model.DB.Select("id").Where("role = ?", common.RoleRootUser).First(&root).Error; e == nil {
+			userID = root.Id
+		}
+	}
+	if userID <= 0 {
+		return out
+	}
+
+	modelName := req.EffectiveModel
+	if modelName == "" {
+		modelName = req.RequestedModel
+	}
+	if modelName == "" && capture != nil {
+		modelName = capture.OriginModel
+	}
+	if modelName == "" {
+		return out
+	}
+
+	// Build full OpenAI chat request from messages (production-derived, not synthetic ping).
+	general := buildShadowGeneralRequest(req, capture, modelName)
+	if general == nil || len(general.Messages) == 0 {
+		return out
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	path := "/v1/chat/completions"
+	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, path, nil)
+	c.Request.Header.Set("Content-Type", "application/json")
+	if requestID != "" {
+		c.Set(common.RequestIdKey, requestID+"-shadow")
+	}
+
+	if cache, e := model.GetUserCache(userID); e == nil && cache != nil {
+		cache.WriteContext(c)
+	}
+	c.Set("id", userID)
+	c.Set("channel", ch.Type)
+	c.Set("base_url", ch.GetBaseURL())
+	if group == "" || group == "default" {
+		if g, e := model.GetUserGroup(userID, false); e == nil && g != "" {
+			group = g
+		}
+	}
+	c.Set("group", group)
+
+	if apiErr := middleware.SetupContextForSelectedChannel(c, ch, modelName); apiErr != nil {
+		return out
+	}
+
+	info, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, general, nil)
+	if err != nil {
+		return out
+	}
+	// Mark as channel-test style so header passthrough quirks don't break; still real DoRequest.
+	info.IsChannelTest = true
+	info.InitChannelMeta(c)
+
+	if err := helper.ModelMappedHelper(c, info, general); err != nil {
+		return out
+	}
+	general.SetModelName(info.UpstreamModelName)
+
+	apiType, _ := common.ChannelType2APIType(ch.Type)
+	adaptor := relay.GetAdaptor(apiType)
+	if adaptor == nil {
+		return out
+	}
+	adaptor.Init(info)
+
+	converted, err := adaptor.ConvertOpenAIRequest(c, info, general)
+	if err != nil {
+		return out
+	}
+	jsonData, err := common.Marshal(converted)
+	if err != nil {
+		return out
+	}
+	if len(info.ParamOverride) > 0 {
+		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
+		if err != nil {
+			return out
+		}
+	}
+
+	start := time.Now()
+	c.Request.Body = io.NopCloser(bytes.NewReader(jsonData))
+	respAny, err := adaptor.DoRequest(c, info, bytes.NewReader(jsonData))
+	if err != nil {
+		logger.LogDebug(c, "shadow DoRequest failed channel=%d model=%s err=%v", ch.Id, modelName, err)
+		return out
+	}
+	httpResp, _ := respAny.(*http.Response)
+	if httpResp == nil {
+		return out
+	}
+	defer httpResp.Body.Close()
+
+	// Drain via DoResponse into recorder (discard to client) to parse usage when possible.
+	usageAny, respErr := adaptor.DoResponse(c, httpResp, info)
+	lat := time.Since(start)
+	out.TotalLatency = lat
+	out.TTFT = lat
+	out.StatusCode = httpResp.StatusCode
+
+	if respErr != nil || httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		out.TransportOK = false
+		out.BuildResult = modelroute.ShadowTransportFailure
+		// still try to log partial? skip billing on fail
+		return out
+	}
+
+	out.TransportOK = true
+	out.BuildResult = modelroute.ShadowBuildOK
+
+	// Bill path: record consume log + channel used quota (provider already billed via real request).
+	// Do not DecreaseUserQuota — shadow cost is operational; mirror channel-test accounting.
+	usage := coerceShadowUsage(usageAny)
+	if usage != nil {
+		priceData, priceErr := helper.ModelPriceHelper(c, info, usage.PromptTokens, general.GetTokenCountMeta())
+		quota := 0
+		if priceErr == nil {
+			quota = settleShadowQuota(info, priceData, usage)
+		}
+		model.RecordConsumeLog(c, userID, model.RecordConsumeLogParams{
+			ChannelId:        ch.Id,
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			ModelName:        info.OriginModelName,
+			TokenName:        tokenName,
+			Quota:            quota,
+			Content:          "影子探测",
+			TokenId:          tokenID,
+			UseTimeSeconds:   int(lat.Seconds()),
+			IsStream:         false,
+			Group:            group,
+			Other: map[string]interface{}{
+				"shadow_probe": true,
+				"admin_info": map[string]interface{}{
+					"shadow_probe": true,
+					"source":       "modelroute",
+				},
+			},
+		})
+		if quota > 0 {
+			model.UpdateChannelUsedQuota(ch.Id, quota)
+		}
+	}
+	return out
+}
+
+func loadChannelForBilledShadow(id int) (*model.Channel, error) {
+	if common.MemoryCacheEnabled {
+		if ch, err := model.CacheGetChannel(id); err == nil && ch != nil {
+			return ch, nil
+		}
+	}
+	return model.GetChannelById(id, true)
+}
+
+func buildShadowGeneralRequest(req *modelroute.ShadowRequest, capture *modelroute.ProductionShadowCapture, modelName string) *dto.GeneralOpenAIRequest {
+	msgs := req.Messages
+	if len(msgs) == 0 && capture != nil {
+		msgs = capture.View.Messages
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	outMsgs := make([]dto.Message, 0, len(msgs))
+	for _, m := range msgs {
+		role := m.Role
+		if role == "" {
+			role = "user"
+		}
+		// skip empty
+		if strings.TrimSpace(m.Text) == "" {
+			continue
+		}
+		outMsgs = append(outMsgs, dto.Message{Role: role, Content: m.Text})
+	}
+	if len(outMsgs) == 0 {
+		return nil
+	}
+	// strip tools always
+	maxTok := req.MaxTokens
+	if maxTok <= 0 && capture != nil && capture.MaxTokens > 0 {
+		maxTok = capture.MaxTokens
+	}
+	if maxTok <= 0 {
+		maxTok = model.DefaultShadowProbeMaxTokens
+	}
+	// Prefer production max when larger? User asked for full request; use production max when provided.
+	if capture != nil && capture.MaxTokens > maxTok {
+		maxTok = capture.MaxTokens
+	}
+	streamFalse := false
+	g := &dto.GeneralOpenAIRequest{
+		Model:    modelName,
+		Messages: outMsgs,
+		Stream:   &streamFalse,
+	}
+	// use MaxTokens for non-o-series; o-series use MaxCompletionTokens in channel-test — keep MaxTokens for generality
+	g.MaxTokens = lo.ToPtr(uint(maxTok))
+	// Explicitly no tools / tool_choice
+	g.Tools = nil
+	return g
+}
+
+func coerceShadowUsage(usageAny any) *dto.Usage {
+	switch u := usageAny.(type) {
+	case *dto.Usage:
+		return u
+	case dto.Usage:
+		return &u
+	default:
+		return nil
+	}
+}
+
+func settleShadowQuota(info *relaycommon.RelayInfo, priceData types.PriceData, usage *dto.Usage) int {
+	if usage == nil {
+		return 0
+	}
+	if !priceData.UsePrice {
+		quota := usage.PromptTokens + int(float64(usage.CompletionTokens)*priceData.CompletionRatio)
+		quota = int(float64(quota) * priceData.ModelRatio)
+		if priceData.ModelRatio != 0 && quota <= 0 {
+			quota = 1
+		}
+		return quota
+	}
+	return int(priceData.ModelPrice * common.QuotaPerUnit)
+}
+
+// BuildProductionShadowCaptureFromRelay extracts a capture from a live relay request for later probes.
+func BuildProductionShadowCaptureFromRelay(c *gin.Context, relayInfo *relaycommon.RelayInfo, request dto.Request) *modelroute.ProductionShadowCapture {
+	if relayInfo == nil {
+		return nil
+	}
+	view := modelroute.ProductionRequestView{
+		RequestedModel: relayInfo.OriginModelName,
+	}
+	maxTokens := 0
+	switch r := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if r == nil {
+			break
+		}
+		for _, m := range r.Messages {
+			text := ""
+			if m.IsStringContent() {
+				text = m.StringContent()
+			} else {
+				// multimodal: mark and try to extract text parts
+				view.HasNonTextContent = true
+				for _, part := range m.ParseContent() {
+					if part.Type == dto.ContentTypeText && part.Text != "" {
+						if text != "" {
+							text += "\n"
+						}
+						text += part.Text
+					}
+				}
+			}
+			if text == "" && m.Role != "user" {
+				continue
+			}
+			view.Messages = append(view.Messages, modelroute.ShadowMessage{Role: m.Role, Text: text})
+		}
+		if len(r.Tools) > 0 {
+			view.HasTools = true
+		}
+		// text-independent if we have a non-empty last user text
+		for i := len(view.Messages) - 1; i >= 0; i-- {
+			if view.Messages[i].Role == "user" && strings.TrimSpace(view.Messages[i].Text) != "" {
+				view.TextIndependentComplete = true
+				break
+			}
+		}
+		if r.MaxTokens != nil {
+			maxTokens = int(*r.MaxTokens)
+		} else if r.MaxCompletionTokens != nil {
+			maxTokens = int(*r.MaxCompletionTokens)
+		}
+	default:
+		// unsupported format for full replay — leave empty so probe is skipped (no ping)
+		return nil
+	}
+	if len(view.Messages) == 0 {
+		return nil
+	}
+	userID := 0
+	tokenID := 0
+	tokenName := ""
+	group := relayInfo.TokenGroup
+	if c != nil {
+		userID = c.GetInt("id")
+		if userID == 0 {
+			userID = common.GetContextKeyInt(c, constant.ContextKeyUserId)
+		}
+		tokenID = common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+		tokenName = c.GetString("token_name")
+		if group == "" {
+			group = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		}
+	}
+	if group == "" {
+		group = relayInfo.UsingGroup
+	}
+	reqID := ""
+	if c != nil {
+		reqID = c.GetString(common.RequestIdKey)
+	}
+	return &modelroute.ProductionShadowCapture{
+		View:        view,
+		UserID:      userID,
+		TokenID:     tokenID,
+		TokenName:   tokenName,
+		Group:       group,
+		RequestID:   reqID,
+		RequestPath: "/v1/chat/completions",
+		OriginModel: relayInfo.OriginModelName,
+		MaxTokens:   maxTokens,
+	}
+}
