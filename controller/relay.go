@@ -123,6 +123,43 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	requestId = relayInfo.RequestId
+	c.Set(common.RequestIdKey, requestId)
+	model.RecordRequestStartLog(c, model.RecordRequestStartLogParams{
+		UserId:    relayInfo.UserId,
+		RequestId: requestId,
+		ModelName: relayInfo.OriginModelName,
+		TokenName: c.GetString("token_name"),
+		TokenId:   relayInfo.TokenId,
+		Group:     relayInfo.UsingGroup,
+		IsStream:  relayInfo.IsStream,
+		CreatedAt: relayInfo.StartTime.Unix(),
+	})
+	defer func() {
+		if newAPIError == nil {
+			return
+		}
+		other := map[string]interface{}{
+			"error_type":  newAPIError.GetErrorType(),
+			"error_code":  newAPIError.GetErrorCode(),
+			"status_code": newAPIError.StatusCode,
+		}
+		if c.Request != nil && c.Request.URL != nil {
+			other["request_path"] = c.Request.URL.Path
+		}
+		model.FinalizePendingRequest(c, model.FinalizePendingRequestParams{
+			UserId:         relayInfo.UserId,
+			ChannelId:      c.GetInt("channel_id"),
+			ModelName:      relayInfo.OriginModelName,
+			TokenName:      c.GetString("token_name"),
+			TokenId:        relayInfo.TokenId,
+			UseTimeSeconds: int(time.Since(relayInfo.StartTime).Seconds()),
+			IsStream:       relayInfo.IsStream,
+			Group:          relayInfo.UsingGroup,
+			Content:        newAPIError.MaskSensitiveErrorWithStatusCode(),
+			Other:          other,
+		})
+	}()
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken

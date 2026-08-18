@@ -31,6 +31,7 @@ import {
   UsageLogsProvider,
   useUsageLogsContext,
 } from './components/usage-logs-provider'
+import { UsageLogsAutoRefresh } from './components/usage-logs-auto-refresh'
 import { UsageLogsTable } from './components/usage-logs-table'
 import {
   isUsageLogsSectionId,
@@ -116,6 +117,9 @@ function UsageLogsContent() {
         <SectionPageLayout.Title>
           {t(pageMeta.titleKey)}
         </SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <UsageLogsAutoRefresh />
+        </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='flex h-full min-h-0 flex-col gap-4'>
             {showTaskSwitcher && (

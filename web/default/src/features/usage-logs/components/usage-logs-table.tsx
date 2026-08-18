@@ -38,6 +38,8 @@ import {
   DEFAULT_LOGS_DATA,
   LOG_TYPE_ALL_VALUE,
   LOG_TYPE_ENUM,
+  LOG_STATUS,
+  USAGE_LOGS_REFRESH_INTERVAL_MS,
 } from '../constants'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
@@ -46,6 +48,7 @@ import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
+import { useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -76,6 +79,7 @@ interface UsageLogsTableProps {
 
 export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const { t } = useTranslation()
+  const { autoRefresh } = useUsageLogsContext()
   const isAdmin = useIsAdmin()
   const isSuperAdmin = useAuthStore(
     (s) => s.auth.user?.role === ROLE.SUPER_ADMIN
@@ -155,6 +159,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       }
       return undefined
     },
+    refetchInterval: autoRefresh ? USAGE_LOGS_REFRESH_INTERVAL_MS : false,
+    refetchIntervalInBackground: false,
   })
 
   const logs = data?.items || []
@@ -216,6 +222,12 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
           | undefined
         let tintClass =
           isCommon && logType != null ? (logTypeRowTint[logType] ?? '') : ''
+        if (
+          isCommon &&
+          (row.original as Record<string, unknown>).status === LOG_STATUS.PENDING
+        ) {
+          tintClass = 'bg-amber-50/50 dark:bg-amber-950/20'
+        }
         if (isCommon && isAdmin) {
           const other = parseLogOther(
             ((row.original as Record<string, unknown>).other as string) ?? ''

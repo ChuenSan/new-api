@@ -26,7 +26,10 @@ import { formatLogQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { getLogStats, getUserLogStats } from '../api'
-import { DEFAULT_LOG_STATS } from '../constants'
+import {
+  DEFAULT_LOG_STATS,
+  USAGE_LOGS_REFRESH_INTERVAL_MS,
+} from '../constants'
 import { buildApiParams } from '../lib/utils'
 import { useUsageLogsContext } from './usage-logs-provider'
 
@@ -52,7 +55,7 @@ export function CommonLogsStats() {
   const { t } = useTranslation()
   const isAdmin = useIsAdmin()
   const searchParams = route.useSearch()
-  const { sensitiveVisible } = useUsageLogsContext()
+  const { sensitiveVisible, autoRefresh } = useUsageLogsContext()
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ['usage-logs-stats', isAdmin, searchParams],
@@ -74,6 +77,8 @@ export function CommonLogsStats() {
         : DEFAULT_LOG_STATS
     },
     placeholderData: (previousData) => previousData,
+    refetchInterval: autoRefresh ? USAGE_LOGS_REFRESH_INTERVAL_MS : false,
+    refetchIntervalInBackground: false,
   })
 
   if (isLoading) {

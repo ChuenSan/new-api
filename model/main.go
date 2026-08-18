@@ -404,7 +404,14 @@ func migrateClickHouseLogDB() error {
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err
 	}
+	if err := syncClickHouseLogColumns(); err != nil {
+		return err
+	}
 	return syncClickHouseLogTTL(ttlDays)
+}
+
+func syncClickHouseLogColumns() error {
+	return LOG_DB.Exec("ALTER TABLE logs ADD COLUMN IF NOT EXISTS status String DEFAULT '' AFTER type").Error
 }
 
 func clickHouseLogTTLDays() int {
@@ -437,6 +444,7 @@ CREATE TABLE IF NOT EXISTS logs (
 	user_id Int32 DEFAULT 0,
 	created_at Int64 DEFAULT 0,
 	type Int32 DEFAULT 0,
+	status String DEFAULT '',
 	content String DEFAULT '',
 	username String DEFAULT '',
 	token_name String DEFAULT '',

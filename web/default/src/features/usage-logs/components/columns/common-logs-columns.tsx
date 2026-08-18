@@ -43,7 +43,7 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { LOG_TYPE_ALL_VALUE } from '../../constants'
+import { LOG_STATUS, LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
@@ -319,6 +319,16 @@ export function useCommonLogsColumns(
               copyable={false}
               className='!text-xs [&_span]:!text-xs'
             />
+            {log.status === LOG_STATUS.PENDING && (
+              <StatusBadge
+                label={t('In Progress')}
+                variant='warning'
+                size='sm'
+                pulse
+                copyable={false}
+                className='!text-xs [&_span]:!text-xs'
+              />
+            )}
           </div>
         )
       },
@@ -626,6 +636,24 @@ export function useCommonLogsColumns(
         const log = row.original
         if (!isTimingLogType(log.type)) return null
 
+        if (log.status === LOG_STATUS.PENDING) {
+          return (
+            <div className='flex flex-col gap-1'>
+              <StatusBadge
+                label={t('Waiting')}
+                variant='warning'
+                size='sm'
+                pulse
+                copyable={false}
+                className='rounded-md'
+              />
+              <span className='text-muted-foreground/60 text-xs'>
+                {log.is_stream ? t('Stream') : t('Non-stream')}
+              </span>
+            </div>
+          )
+        }
+
         const useTime = row.getValue('use_time') as number
         const other = parseLogOther(log.other)
         const frt = other?.frt
@@ -836,7 +864,10 @@ export function useCommonLogsColumns(
         const other = parseLogOther(log.other)
 
         const segments = buildDetailSegments(log, other, t, isAdmin)
-        const primary = segments[0]
+        const primary =
+          log.status === LOG_STATUS.PENDING
+            ? { text: t('In Progress'), muted: true }
+            : segments[0]
         const hasMore = segments.length > 1
 
         return (

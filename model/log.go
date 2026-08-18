@@ -61,6 +61,7 @@ type Log struct {
 	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
 	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type"`
 	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
+	Status            string `json:"status" gorm:"index;default:''"`
 	Content           string `json:"content"`
 	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
@@ -93,6 +94,12 @@ const (
 	LogTypeLogin   = 7
 )
 
+const (
+	LogStatusPending   = "pending"
+	LogStatusCompleted = "completed"
+	LogStatusFailed    = "failed"
+)
+
 func ensureLogRequestId(log *Log) {
 	if log != nil && log.RequestId == "" {
 		log.RequestId = common.NewRequestId()
@@ -102,6 +109,171 @@ func ensureLogRequestId(log *Log) {
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
 	return LOG_DB.Create(log).Error
+}
+
+func updatePendingLog(requestId string, updates map[string]interface{}) (bool, error) {
+	if requestId == "" {
+		return false, nil
+	}
+	result := LOG_DB.Model(&Log{}).
+		Where("request_id = ? AND status = ?", requestId, LogStatusPending).
+		Updates(updates)
+	return result.RowsAffected > 0, result.Error
+}
+
+func deletePendingLog(requestId string) error {
+	if requestId == "" {
+		return nil
+	}
+	return LOG_DB.Where("request_id = ? AND status = ?", requestId, LogStatusPending).Delete(&Log{}).Error
+}
+
+func pendingLogUpdates(log *Log) map[string]interface{} {
+	return map[string]interface{}{
+		"type":                log.Type,
+		"status":              log.Status,
+		"content":             log.Content,
+		"username":            log.Username,
+		"token_name":          log.TokenName,
+		"model_name":          log.ModelName,
+		"quota":               log.Quota,
+		"prompt_tokens":       log.PromptTokens,
+		"completion_tokens":   log.CompletionTokens,
+		"use_time":            log.UseTime,
+		"is_stream":           log.IsStream,
+		"channel_id":          log.ChannelId,
+		"token_id":            log.TokenId,
+		"group":               log.Group,
+		"ip":                  log.Ip,
+		"upstream_request_id": log.UpstreamRequestId,
+		"other":               log.Other,
+	}
+}
+
+// RecordRequestStartLog creates the usage-log row as soon as a validated relay
+// request enters billing/upstream processing. The row is updated by the final
+// consume/error log so a slow request is visible without creating a duplicate
+// charge record.
+type RecordRequestStartLogParams struct {
+	UserId    int
+	RequestId string
+	ModelName string
+	TokenName string
+	TokenId   int
+	Group     string
+	ChannelId int
+	IsStream  bool
+	CreatedAt int64
+	Content   string
+}
+
+func RecordRequestStartLog(c *gin.Context, params RecordRequestStartLogParams) {
+	if !common.LogConsumeEnabled || params.RequestId == "" {
+		return
+	}
+	createdAt := params.CreatedAt
+	if createdAt == 0 {
+		createdAt = common.GetTimestamp()
+	}
+	username := ""
+	other := map[string]interface{}{}
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		other["request_path"] = c.Request.URL.Path
+	}
+	if c != nil {
+		username = c.GetString("username")
+	}
+	content := params.Content
+	if content == "" {
+		content = "Request received, waiting for response"
+	}
+	log := &Log{
+		UserId:    params.UserId,
+		Username:  username,
+		CreatedAt: createdAt,
+		Type:      LogTypeConsume,
+		Status:    LogStatusPending,
+		Content:   content,
+		TokenName: params.TokenName,
+		ModelName: params.ModelName,
+		ChannelId: params.ChannelId,
+		TokenId:   params.TokenId,
+		Group:     params.Group,
+		IsStream:  params.IsStream,
+		RequestId: params.RequestId,
+		Other:     common.MapToJsonStr(other),
+	}
+	if err := createLog(log); err != nil {
+		logger.LogError(c, "failed to record request start log: "+err.Error())
+	}
+}
+
+type FinalizePendingRequestParams struct {
+	UserId         int
+	ChannelId      int
+	ModelName      string
+	TokenName      string
+	TokenId        int
+	UseTimeSeconds int
+	IsStream       bool
+	Group          string
+	Content        string
+	Other          map[string]interface{}
+}
+
+// FinalizePendingRequest settles a pending request that failed before a final
+// consume log could be recorded. Channel-attempt error rows are kept for
+// diagnostics; when one exists, the pending placeholder is removed instead of
+// duplicating the same failed request in the usage-log list.
+func FinalizePendingRequest(c *gin.Context, params FinalizePendingRequestParams) {
+	if !common.LogConsumeEnabled || c == nil {
+		return
+	}
+	requestId := c.GetString(common.RequestIdKey)
+	if requestId == "" {
+		return
+	}
+	var errorCount int64
+	if err := LOG_DB.Model(&Log{}).Where("request_id = ? AND type = ?", requestId, LogTypeError).Count(&errorCount).Error; err != nil {
+		logger.LogError(c, "failed to inspect request error logs: "+err.Error())
+	}
+	if errorCount > 0 {
+		if err := deletePendingLog(requestId); err != nil {
+			logger.LogError(c, "failed to remove pending request log: "+err.Error())
+		}
+		return
+	}
+
+	username := c.GetString("username")
+	log := &Log{
+		UserId:            params.UserId,
+		Username:          username,
+		Type:              LogTypeError,
+		Status:            LogStatusFailed,
+		Content:           params.Content,
+		TokenName:         params.TokenName,
+		ModelName:         params.ModelName,
+		Quota:             0,
+		ChannelId:         params.ChannelId,
+		TokenId:           params.TokenId,
+		UseTime:           params.UseTimeSeconds,
+		IsStream:          params.IsStream,
+		Group:             params.Group,
+		RequestId:         requestId,
+		UpstreamRequestId: c.GetString(common.UpstreamRequestIdKey),
+		Other:             common.MapToJsonStr(params.Other),
+	}
+	updated, err := updatePendingLog(requestId, pendingLogUpdates(log))
+	if err != nil {
+		logger.LogError(c, "failed to finalize pending request log: "+err.Error())
+		_ = deletePendingLog(requestId)
+	}
+	if updated {
+		return
+	}
+	if err := createLog(log); err != nil {
+		logger.LogError(c, "failed to record finalized request error log: "+err.Error())
+	}
 }
 
 func clickHouseLogOrder(prefix string) string {
@@ -363,6 +535,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Username:         username,
 		CreatedAt:        createdAt,
 		Type:             LogTypeConsume,
+		Status:           LogStatusCompleted,
 		Content:          params.Content,
 		PromptTokens:     params.PromptTokens,
 		CompletionTokens: params.CompletionTokens,
@@ -384,9 +557,18 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := createLog(log)
-	if err != nil {
-		logger.LogError(c, "failed to record log: "+err.Error())
+	updated, updateErr := updatePendingLog(requestId, pendingLogUpdates(log))
+	if updateErr != nil {
+		logger.LogError(c, "failed to update pending consume log: "+updateErr.Error())
+	}
+	if !updated {
+		if err := deletePendingLog(requestId); err != nil {
+			logger.LogError(c, "failed to remove pending consume log before fallback: "+err.Error())
+			return
+		}
+		if err := createLog(log); err != nil {
+			logger.LogError(c, "failed to record log: "+err.Error())
+		}
 	}
 	if common.DataExportEnabled {
 		LogQuotaData(QuotaDataLogParams{
@@ -635,6 +817,11 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 
 	tx = tx.Where("type = ?", LogTypeConsume)
 	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
+	// Pending placeholders are visible in the log list but must not be counted
+	// as completed usage until they settle.
+	completedStatusCondition := "(status IS NULL OR status = '' OR status <> ?)"
+	tx = tx.Where(completedStatusCondition, LogStatusPending)
+	rpmTpmQuery = rpmTpmQuery.Where(completedStatusCondition, LogStatusPending)
 
 	// 只统计最近60秒的rpm和tpm
 	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())

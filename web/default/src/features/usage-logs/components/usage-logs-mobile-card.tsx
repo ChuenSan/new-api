@@ -36,7 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { LOG_TYPE_ENUM } from '../constants'
+import { LOG_STATUS, LOG_TYPE_ENUM } from '../constants'
 import { getLogTypeConfig } from '../lib/utils'
 import type { LogCategory } from '../types'
 
@@ -144,13 +144,16 @@ function SummaryField<TData>({
 function MobileLogTimeStatus({
   createdAt,
   type,
+  status,
 }: {
   createdAt: unknown
   type: unknown
+  status: unknown
 }) {
   const { t } = useTranslation()
   const timestamp = typeof createdAt === 'number' ? createdAt : undefined
   const logType = typeof type === 'number' ? type : undefined
+  const logStatus = typeof status === 'string' ? status : undefined
   const config = getLogTypeConfig(logType ?? LOG_TYPE_ENUM.UNKNOWN)
   const variant = config.color as StatusVariant
 
@@ -171,6 +174,12 @@ function MobileLogTimeStatus({
         />
         <span>{t(config.label)}</span>
       </div>
+      {logStatus === LOG_STATUS.PENDING && (
+        <div className='text-warning flex items-center gap-1 text-xs leading-none'>
+          <span className='size-1.5 animate-pulse rounded-full bg-current' />
+          <span>{t('In Progress')}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -207,6 +216,7 @@ function CommonLogsCard<TData>({
           <MobileLogTimeStatus
             createdAt={rowData?.created_at}
             type={rowData?.type}
+            status={rowData?.status}
           />
         </div>
         <SummaryField

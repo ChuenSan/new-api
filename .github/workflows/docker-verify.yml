@@ -2,7 +2,7 @@ name: Docker build & publish (verify)
 
 on:
   push:
-    branches: [feat/model-route-shadow-probe, pre/messages-to-chat-convert]
+    branches: [feat/model-route-shadow-probe, pre/messages-to-chat-convert, fix/optimize-log-display]
   workflow_dispatch:
 
 env:

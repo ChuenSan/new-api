@@ -44,6 +44,7 @@ import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { UsageLog } from '../../data/schema'
+import { LOG_STATUS } from '../../constants'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -587,6 +588,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
               value={props.log.upstream_request_id}
               mono
             />
+          )}
+          {props.log.status === LOG_STATUS.PENDING && (
+            <DetailRow label={t('Status')} value={t('In Progress')} />
           )}
 
           {props.isAdmin && props.log.channel > 0 && (

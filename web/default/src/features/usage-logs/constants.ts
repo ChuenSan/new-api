@@ -44,6 +44,16 @@ export const DEFAULT_LOGS_DATA = {
   total: 0,
 }
 
+export const USAGE_LOGS_REFRESH_INTERVAL_MS = 1000
+export const USAGE_LOGS_REFRESH_INTERVAL_SECONDS =
+  USAGE_LOGS_REFRESH_INTERVAL_MS / 1000
+
+export const LOG_STATUS = {
+  PENDING: 'pending',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+} as const
+
 // ============================================================================
 // Log Type Enum
 // ============================================================================
