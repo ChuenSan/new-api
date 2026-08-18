@@ -28,6 +28,7 @@ import {
   getMetricsActionErrorMessage,
   isMetricsRowVisible,
   metricsRowKey,
+  patchMetricsRateLimitThreshold,
   patchMetricsResetUnknown,
   rowMetricsActions,
 } from './metrics-reset'
@@ -136,6 +137,28 @@ describe('model route metrics reset helpers', () => {
         effective_model: 'target',
       }),
       response
+    )
+  })
+
+  test('patches only one route threshold and supports clearing the override', () => {
+    const patched = patchMetricsRateLimitThreshold(
+      response,
+      { channel_id: 1, effective_model: 'target' },
+      9
+    )
+    assert.notEqual(patched, response)
+    assert.equal(patched?.data[0].rate_limit_circuit_breaker_threshold, 9)
+    assert.equal(patched?.data[1], response.data[1])
+
+    const cleared = patchMetricsRateLimitThreshold(
+      patched,
+      { channel_id: 1, effective_model: 'target' },
+      null
+    )
+    assert.equal(cleared?.data[0].rate_limit_circuit_breaker_threshold, null)
+    assert.equal(
+      response.data[0].rate_limit_circuit_breaker_threshold,
+      undefined
     )
   })
 

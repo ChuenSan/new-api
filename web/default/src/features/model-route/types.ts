@@ -39,6 +39,8 @@ export type ModelRouteMetrics = {
   channel_exists?: boolean
   effective_model: string
   requested_models?: string[]
+  rate_limit_circuit_breaker_threshold?: number | null
+  rate_limit_circuit_breaker_effective_threshold?: number
   route_state: string
   role?: string
   is_stale?: boolean
@@ -102,6 +104,12 @@ export type MetricsActionRequest = {
     | 'manual_disable'
     | 'restore_auto'
     | 'reset_unknown'
+}
+
+export type UpdateRateLimitCircuitBreakerThresholdRequest = {
+  channel_id: number
+  effective_model: string
+  threshold: number | null
 }
 
 export type ModelRouteMetricsResponse = {

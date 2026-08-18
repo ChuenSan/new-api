@@ -155,3 +155,26 @@ export function patchMetricsResetUnknown(
   })
   return changed ? { ...response, data } : response
 }
+
+export function patchMetricsRateLimitThreshold(
+  response: ModelRouteMetricsResponse | undefined,
+  target: Pick<ModelRouteMetrics, 'channel_id' | 'effective_model'>,
+  threshold: number | null
+) {
+  if (!response) return response
+  let changed = false
+  const data = response.data.map((row) => {
+    if (
+      row.channel_id !== target.channel_id ||
+      row.effective_model !== target.effective_model
+    ) {
+      return row
+    }
+    changed = true
+    return {
+      ...row,
+      rate_limit_circuit_breaker_threshold: threshold,
+    }
+  })
+  return changed ? { ...response, data } : response
+}

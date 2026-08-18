@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/modelroute"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -310,13 +312,14 @@ func ListModelRouteMetrics(c *gin.Context) {
 	requestedByMetrics := buildRequestedModelsByMetricsKey(ids, channels)
 	type rowView struct {
 		model.ChannelModelMetrics
-		Role            string   `json:"role"`
-		IsStale         bool     `json:"is_stale"`
-		ChannelName     string   `json:"channel_name"`
-		BaseURL         string   `json:"base_url"`
-		ChannelStatus   int      `json:"channel_status"`
-		ChannelExists   bool     `json:"channel_exists"`
-		RequestedModels []string `json:"requested_models"`
+		Role                             string   `json:"role"`
+		IsStale                          bool     `json:"is_stale"`
+		ChannelName                      string   `json:"channel_name"`
+		BaseURL                          string   `json:"base_url"`
+		ChannelStatus                    int      `json:"channel_status"`
+		ChannelExists                    bool     `json:"channel_exists"`
+		RequestedModels                  []string `json:"requested_models"`
+		RateLimitCircuitBreakerEffective int      `json:"rate_limit_circuit_breaker_effective_threshold"`
 	}
 	out := make([]rowView, 0, len(rows))
 	for i := range rows {
@@ -327,17 +330,82 @@ func ListModelRouteMetrics(c *gin.Context) {
 			requested = []string{}
 		}
 		out = append(out, rowView{
-			ChannelModelMetrics: rows[i],
-			Role:                string(modelroute.GlobalRoles.Get(mk)),
-			IsStale:             modelroute.IsRouteStale(&rows[i], false),
-			ChannelName:         info.Name,
-			BaseURL:             info.BaseURL,
-			ChannelStatus:       info.Status,
-			ChannelExists:       info.Exists,
-			RequestedModels:     requested,
+			ChannelModelMetrics:              rows[i],
+			Role:                             string(modelroute.GlobalRoles.Get(mk)),
+			IsStale:                          modelroute.IsRouteStale(&rows[i], false),
+			ChannelName:                      info.Name,
+			BaseURL:                          info.BaseURL,
+			ChannelStatus:                    info.Status,
+			ChannelExists:                    info.Exists,
+			RequestedModels:                  requested,
+			RateLimitCircuitBreakerEffective: modelroute.GetRateLimitCircuitBreakerThreshold(&rows[i]),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": out})
+}
+
+type updateMetricsThresholdRequest struct {
+	ChannelID      int64           `json:"channel_id"`
+	EffectiveModel string          `json:"effective_model"`
+	Threshold      json.RawMessage `json:"threshold"`
+}
+
+// UpdateModelRouteMetricsThreshold PUT /api/model_route/metrics/threshold.
+// A null threshold clears the route override and inherits the global setting.
+func UpdateModelRouteMetricsThreshold(c *gin.Context) {
+	var req updateMetricsThresholdRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid body"})
+		return
+	}
+	req.EffectiveModel = strings.TrimSpace(req.EffectiveModel)
+	if req.ChannelID <= 0 || req.EffectiveModel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "channel_id and effective_model required"})
+		return
+	}
+	if len(req.Threshold) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "threshold is required and must be an integer from 3 to 999, or null",
+		})
+		return
+	}
+	var threshold *int
+	if common.GetJsonType(req.Threshold) != "null" {
+		var value int
+		if err := common.Unmarshal(req.Threshold, &value); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "threshold must be an integer from 3 to 999, or null",
+			})
+			return
+		}
+		threshold = &value
+	}
+	if threshold != nil && (*threshold < operation_setting.MinRateLimitCircuitBreakerThreshold ||
+		*threshold > operation_setting.MaxRateLimitCircuitBreakerThreshold) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "threshold must be an integer from 3 to 999, or null to inherit the global setting",
+		})
+		return
+	}
+	if _, err := modelroute.UpdateRateLimitCircuitBreakerThreshold(
+		req.ChannelID,
+		req.EffectiveModel,
+		threshold,
+	); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "model_route.metrics_threshold", map[string]interface{}{
+		"channel_id": req.ChannelID, "effective_model": req.EffectiveModel,
+		"threshold": threshold,
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
+		"channel_id": req.ChannelID, "effective_model": req.EffectiveModel,
+		"threshold": threshold,
+	}})
 }
 
 type metricsActionRequest struct {

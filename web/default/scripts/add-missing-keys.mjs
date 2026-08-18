@@ -9,6 +9,15 @@ function stableStringify(obj) {
 
 const newKeys = {
   en: {
+    '429 failures before opening': '429 failures before opening',
+    '429 threshold override': '429 threshold override',
+    'Allowed range: 3-999': 'Allowed range: 3-999',
+    'Configure how many consecutive 429 responses open a channel-model route.':
+      'Configure how many consecutive 429 responses open a channel-model route.',
+    'Enter an integer from 3 to 999': 'Enter an integer from 3 to 999',
+    'Global: {{value}}': 'Global: {{value}}',
+    Inherited: 'Inherited',
+    'Rate-limit circuit breaker': 'Rate-limit circuit breaker',
     '{{available}}/{{count}} available': '{{available}}/{{count}} available',
     '{{count}} channel(s)': '{{count}} channel(s)',
     'All channels': 'All channels',
@@ -43,6 +52,15 @@ const newKeys = {
       'Use existing model-level routing without channel restrictions',
   },
   zh: {
+    '429 failures before opening': '触发熔断前的 429 次数',
+    '429 threshold override': '429 次数单独覆盖',
+    'Allowed range: 3-999': '允许范围：3-999',
+    'Configure how many consecutive 429 responses open a channel-model route.':
+      '配置同一渠道-模型路由连续收到多少次 429 后触发熔断。',
+    'Enter an integer from 3 to 999': '请输入 3 到 999 之间的整数',
+    'Global: {{value}}': '全局值：{{value}}',
+    Inherited: '继承全局',
+    'Rate-limit circuit breaker': '限流熔断',
     '{{available}}/{{count}} available': '{{available}}/{{count}} 可用',
     '{{count}} channel(s)': '{{count}} 个渠道',
     'All channels': '全部渠道',
@@ -76,6 +94,15 @@ const newKeys = {
       '使用现有模型级路由，不限制渠道',
   },
   fr: {
+    '429 failures before opening': 'Réponses 429 avant ouverture',
+    '429 threshold override': 'Seuil 429 par route',
+    'Allowed range: 3-999': 'Plage autorisée : 3-999',
+    'Configure how many consecutive 429 responses open a channel-model route.':
+      'Configurez le nombre de réponses 429 consécutives qui ouvrent une route canal-modèle.',
+    'Enter an integer from 3 to 999': 'Entrez un entier de 3 à 999',
+    'Global: {{value}}': 'Global : {{value}}',
+    Inherited: 'Hérité',
+    'Rate-limit circuit breaker': 'Disjoncteur de limitation',
     '{{available}}/{{count}} available': '{{available}}/{{count}} disponibles',
     '{{count}} channel(s)': '{{count}} canaux',
     'All channels': 'Tous les canaux',
@@ -112,6 +139,15 @@ const newKeys = {
       'Utiliser le routage par modèle existant sans limiter les canaux',
   },
   ja: {
+    '429 failures before opening': '開路するまでの 429 回数',
+    '429 threshold override': '429 回数のルート別設定',
+    'Allowed range: 3-999': '許可範囲: 3-999',
+    'Configure how many consecutive 429 responses open a channel-model route.':
+      'チャネルとモデルのルートを開くまでに許容する連続 429 応答数を設定します。',
+    'Enter an integer from 3 to 999': '3〜999 の整数を入力してください',
+    'Global: {{value}}': 'グローバル: {{value}}',
+    Inherited: '継承',
+    'Rate-limit circuit breaker': 'レート制限サーキットブレーカー',
     '{{available}}/{{count}} available': '{{available}}/{{count}} 利用可能',
     '{{count}} channel(s)': '{{count}} チャネル',
     'All channels': 'すべてのチャネル',
@@ -146,6 +182,15 @@ const newKeys = {
       'チャネルを制限せず既存のモデル単位ルーティングを使用',
   },
   ru: {
+    '429 failures before opening': 'Ответов 429 до размыкания',
+    '429 threshold override': 'Переопределение порога 429',
+    'Allowed range: 3-999': 'Допустимый диапазон: 3–999',
+    'Configure how many consecutive 429 responses open a channel-model route.':
+      'Настройте, сколько последовательных ответов 429 переводят маршрут канала и модели в разомкнутое состояние.',
+    'Enter an integer from 3 to 999': 'Введите целое число от 3 до 999',
+    'Global: {{value}}': 'Глобальное значение: {{value}}',
+    Inherited: 'Унаследовано',
+    'Rate-limit circuit breaker': 'Размыкатель ограничения частоты',
     '{{available}}/{{count}} available': '{{available}}/{{count}} доступно',
     '{{count}} channel(s)': 'Каналов: {{count}}',
     'All channels': 'Все каналы',
@@ -181,6 +226,15 @@ const newKeys = {
       'Использовать текущую маршрутизацию по моделям без ограничений каналов',
   },
   vi: {
+    '429 failures before opening': 'Số lỗi 429 trước khi mở',
+    '429 threshold override': 'Ghi đè ngưỡng 429',
+    'Allowed range: 3-999': 'Phạm vi cho phép: 3-999',
+    'Configure how many consecutive 429 responses open a channel-model route.':
+      'Cấu hình số lần phản hồi 429 liên tiếp để mở tuyến kênh-mô hình.',
+    'Enter an integer from 3 to 999': 'Nhập số nguyên từ 3 đến 999',
+    'Global: {{value}}': 'Toàn cục: {{value}}',
+    Inherited: 'Kế thừa',
+    'Rate-limit circuit breaker': 'Ngắt mạch giới hạn tốc độ',
     '{{available}}/{{count}} available': '{{available}}/{{count}} khả dụng',
     '{{count}} channel(s)': '{{count}} kênh',
     'All channels': 'Tất cả kênh',
@@ -216,6 +270,15 @@ const newKeys = {
       'Dùng định tuyến cấp mô hình hiện có, không giới hạn kênh',
   },
   'zh-TW': {
+    '429 failures before opening': '觸發熔斷前的 429 次數',
+    '429 threshold override': '429 次數個別覆寫',
+    'Allowed range: 3-999': '允許範圍：3-999',
+    'Configure how many consecutive 429 responses open a channel-model route.':
+      '設定同一渠道-模型路由連續收到多少次 429 後觸發熔斷。',
+    'Enter an integer from 3 to 999': '請輸入 3 到 999 之間的整數',
+    'Global: {{value}}': '全域值：{{value}}',
+    Inherited: '繼承全域',
+    'Rate-limit circuit breaker': '限流熔斷',
     '{{available}}/{{count}} available': '{{available}}/{{count}} 可用',
     '{{count}} channel(s)': '{{count}} 個渠道',
     'All channels': '全部渠道',

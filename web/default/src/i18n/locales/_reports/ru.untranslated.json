@@ -4,6 +4,7 @@
   "All learning reset": "All learning reset",
   "Apply \"{{action}}\" to {{count}} selected metrics?": "Apply \"{{action}}\" to {{count}} selected metrics?",
   "Batch action": "Batch action",
+  "Channel #{{channel}} is disabled; its route metrics are hidden": "Channel #{{channel}} is disabled; its route metrics are hidden",
   "Channel priority (legacy)": "Channel priority (legacy)",
   "Configured": "Configured",
   "Confirm force probe for {{count}} selected metrics?": "Confirm force probe for {{count}} selected metrics?",
@@ -34,6 +35,7 @@
   "New manual priority": "New manual priority",
   "No metrics": "No metrics",
   "No policies": "No policies",
+  "No route metrics found for channel #{{channel}} / {{model}}": "No route metrics found for channel #{{channel}} / {{model}}",
   "Observed": "Observed",
   "Policies": "Policies",
   "Priority first": "Priority first",
@@ -49,9 +51,7 @@
   "Routing behavior mode": "Routing behavior mode",
   "Routing priority mode": "Routing priority mode",
   "Runtime learning reset": "Runtime learning reset",
+  "Select in model route": "Select in model route",
   "Success EMA": "Success EMA",
-  "Trip open": "Trip open",
-  "Channel #{{channel}} is disabled; its route metrics are hidden": "Channel #{{channel}} is disabled; its route metrics are hidden",
-  "No route metrics found for channel #{{channel}} / {{model}}": "No route metrics found for channel #{{channel}} / {{model}}",
-  "Select in model route": "Select in model route"
+  "Trip open": "Trip open"
 }

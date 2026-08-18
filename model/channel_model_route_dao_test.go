@@ -389,6 +389,37 @@ func TestEnsureChannelModelMetricsLazyCreate(t *testing.T) {
 	assert.Equal(t, m.ChannelID, again.ChannelID)
 }
 
+func TestUpdateChannelModelMetricsRateLimitThreshold(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, UpsertChannelModelMetrics(&ChannelModelMetrics{
+		ChannelID: 13, EffectiveModel: "gpt-route", RouteState: string(RouteHealthy),
+	}))
+
+	threshold := 7
+	updated, err := UpdateChannelModelMetricsRateLimitThreshold(13, "gpt-route", &threshold)
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.NotNil(t, updated.RateLimitCircuitBreakerThreshold)
+	assert.Equal(t, threshold, *updated.RateLimitCircuitBreakerThreshold)
+
+	stored, err := GetChannelModelMetrics(13, "gpt-route")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.NotNil(t, stored.RateLimitCircuitBreakerThreshold)
+	assert.Equal(t, threshold, *stored.RateLimitCircuitBreakerThreshold)
+
+	cleared, err := UpdateChannelModelMetricsRateLimitThreshold(13, "gpt-route", nil)
+	require.NoError(t, err)
+	assert.Nil(t, cleared.RateLimitCircuitBreakerThreshold)
+	stored, err = GetChannelModelMetrics(13, "gpt-route")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Nil(t, stored.RateLimitCircuitBreakerThreshold)
+
+	_, err = UpdateChannelModelMetricsRateLimitThreshold(404, "missing", &threshold)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
 func TestResetChannelModelMetricsUnknownPreservesLatestLearning(t *testing.T) {
 	truncateTables(t)
 	persistedScore := 0.4

@@ -21,6 +21,9 @@ type ChannelModelMetrics struct {
 	CooldownUntil  *int64 `json:"cooldown_until" gorm:"bigint"`
 	BackoffLevel   int    `json:"backoff_level" gorm:"not null;default:0"`
 
+	// A nil value inherits the process-wide model route setting.
+	RateLimitCircuitBreakerThreshold *int `json:"rate_limit_circuit_breaker_threshold" gorm:"column:rate_limit_circuit_breaker_threshold"`
+
 	ProductionSampleCount int64 `json:"production_sample_count" gorm:"not null;default:0"`
 	ShadowSampleCount     int64 `json:"shadow_sample_count" gorm:"not null;default:0"`
 
@@ -42,9 +45,10 @@ type ChannelModelMetrics struct {
 
 	// Runtime counters not all in SQL schema of §32 — kept in-memory via runtime cache;
 	// consecutive/recover/takeover are process-local and reset on restart unless later persisted.
-	ConsecutiveFailures   int `json:"consecutive_failures" gorm:"-"`
-	RecoverSuccessCount   int `json:"recover_success_count" gorm:"-"`
-	TakeoverConfirmations int `json:"takeover_confirmations" gorm:"-"`
+	ConsecutiveFailures          int `json:"consecutive_failures" gorm:"-"`
+	ConsecutiveRateLimitFailures int `json:"-" gorm:"-"`
+	RecoverSuccessCount          int `json:"recover_success_count" gorm:"-"`
+	TakeoverConfirmations        int `json:"takeover_confirmations" gorm:"-"`
 
 	LastRequestAt *int64 `json:"last_request_at" gorm:"bigint"`
 	LastSuccessAt *int64 `json:"last_success_at" gorm:"bigint"`
@@ -169,6 +173,36 @@ func GetChannelModelMetrics(channelID int64, effectiveModel string) (*ChannelMod
 		return nil, err
 	}
 	return &m, nil
+}
+
+// UpdateChannelModelMetricsRateLimitThreshold updates only the per-route
+// breaker override. A nil threshold clears the override and restores the
+// process-wide fallback.
+func UpdateChannelModelMetricsRateLimitThreshold(
+	channelID int64,
+	effectiveModel string,
+	threshold *int,
+) (*ChannelModelMetrics, error) {
+	var result ChannelModelMetrics
+	updatedAt := common.GetTimestamp()
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("channel_id = ? AND effective_model = ?", channelID, effectiveModel).
+			First(&result).Error; err != nil {
+			return err
+		}
+		return tx.Model(&ChannelModelMetrics{}).
+			Where("channel_id = ? AND effective_model = ?", channelID, effectiveModel).
+			Updates(map[string]interface{}{
+				"rate_limit_circuit_breaker_threshold": threshold,
+				"updated_at":                           updatedAt,
+			}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.RateLimitCircuitBreakerThreshold = threshold
+	result.UpdatedAt = updatedAt
+	return &result, nil
 }
 
 // ListChannelModelMetricsByChannel returns all metrics for a channel.

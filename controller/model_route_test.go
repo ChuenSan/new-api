@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/modelroute"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -83,6 +84,16 @@ type metricsActionResponse struct {
 	Message string `json:"message"`
 }
 
+type metricsThresholdResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    struct {
+		ChannelID      int64  `json:"channel_id"`
+		EffectiveModel string `json:"effective_model"`
+		Threshold      *int   `json:"threshold"`
+	} `json:"data"`
+}
+
 func performMetricsAction(t *testing.T, body map[string]interface{}) (*httptest.ResponseRecorder, metricsActionResponse) {
 	t.Helper()
 	payload, err := common.Marshal(body)
@@ -96,6 +107,28 @@ func performMetricsAction(t *testing.T, body map[string]interface{}) (*httptest.
 	ModelRouteMetricsAction(ctx)
 
 	var response metricsActionResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	return recorder, response
+}
+
+func performMetricsThreshold(t *testing.T, body map[string]interface{}) (*httptest.ResponseRecorder, metricsThresholdResponse) {
+	t.Helper()
+	payload, err := common.Marshal(body)
+	require.NoError(t, err)
+	return performMetricsThresholdRaw(t, payload)
+}
+
+func performMetricsThresholdRaw(t *testing.T, payload []byte) (*httptest.ResponseRecorder, metricsThresholdResponse) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 7)
+	ctx.Set("username", "root")
+	ctx.Set("role", 100)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/model_route/metrics/threshold", bytes.NewReader(payload))
+	UpdateModelRouteMetricsThreshold(ctx)
+
+	var response metricsThresholdResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	return recorder, response
 }
@@ -209,6 +242,96 @@ func TestModelRouteMetricsActionResetUnknown(t *testing.T) {
 	assert.Equal(t, "effective", auditData.Op.Params.EffectiveModel)
 	assert.Equal(t, "reset_unknown", auditData.Op.Params.Action)
 	assert.Equal(t, 7, auditData.AdminInfo.AdminID)
+}
+
+func TestUpdateModelRouteMetricsThresholdSupportsOverrideAndInheritance(t *testing.T) {
+	setupModelRouteControllerTestDB(t)
+	settings := operation_setting.GetModelRouteSetting()
+	original := settings.RateLimitCircuitBreakerThreshold
+	settings.RateLimitCircuitBreakerThreshold = 3
+	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
+
+	require.NoError(t, model.UpsertChannelModelMetrics(&model.ChannelModelMetrics{
+		ChannelID: 61, EffectiveModel: "effective", RouteState: string(model.RouteHealthy),
+	}))
+	runtime := &model.ChannelModelMetrics{
+		ChannelID: 61, EffectiveModel: "effective", RouteState: string(model.RouteHealthy),
+	}
+	modelroute.GlobalMetricsRuntime.Put(runtime)
+
+	threshold := 8
+	recorder, response := performMetricsThreshold(t, map[string]interface{}{
+		"channel_id": 61, "effective_model": "  effective  ", "threshold": threshold,
+	})
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.True(t, response.Success)
+	require.NotNil(t, response.Data.Threshold)
+	assert.Equal(t, threshold, *response.Data.Threshold)
+	assert.Equal(t, threshold, modelroute.GetRateLimitCircuitBreakerThreshold(runtime))
+
+	stored, err := model.GetChannelModelMetrics(61, "effective")
+	require.NoError(t, err)
+	require.NotNil(t, stored.RateLimitCircuitBreakerThreshold)
+	assert.Equal(t, threshold, *stored.RateLimitCircuitBreakerThreshold)
+
+	recorder, response = performMetricsThreshold(t, map[string]interface{}{
+		"channel_id": 61, "effective_model": "effective", "threshold": nil,
+	})
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.True(t, response.Success)
+	assert.Nil(t, response.Data.Threshold)
+	assert.Equal(t, 3, modelroute.GetRateLimitCircuitBreakerThreshold(runtime))
+
+	stored, err = model.GetChannelModelMetrics(61, "effective")
+	require.NoError(t, err)
+	assert.Nil(t, stored.RateLimitCircuitBreakerThreshold)
+
+	recorder, response = performMetricsThreshold(t, map[string]interface{}{
+		"channel_id": 61, "effective_model": "effective", "threshold": 2,
+	})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.False(t, response.Success)
+	stored, err = model.GetChannelModelMetrics(61, "effective")
+	require.NoError(t, err)
+	assert.Nil(t, stored.RateLimitCircuitBreakerThreshold)
+}
+
+func TestUpdateModelRouteMetricsThresholdRejectsInvalidRequests(t *testing.T) {
+	setupModelRouteControllerTestDB(t)
+	require.NoError(t, model.UpsertChannelModelMetrics(&model.ChannelModelMetrics{
+		ChannelID: 62, EffectiveModel: "effective", RouteState: string(model.RouteHealthy),
+	}))
+
+	validThresholds := []int{3, 999}
+	for _, threshold := range validThresholds {
+		recorder, response := performMetricsThreshold(t, map[string]interface{}{
+			"channel_id": 62, "effective_model": "effective", "threshold": threshold,
+		})
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		assert.True(t, response.Success)
+	}
+
+	invalidBodies := []map[string]interface{}{
+		{"channel_id": 62, "effective_model": "effective", "threshold": 2},
+		{"channel_id": 62, "effective_model": "effective", "threshold": 1000},
+		{"channel_id": 62, "effective_model": "effective", "threshold": "3"},
+		{"channel_id": 62, "effective_model": "effective"},
+	}
+	for _, body := range invalidBodies {
+		recorder, response := performMetricsThreshold(t, body)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		assert.False(t, response.Success)
+	}
+
+	recorder, response := performMetricsThresholdRaw(t, []byte(`{"channel_id":62,"effective_model":"effective","threshold":`))
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.False(t, response.Success)
+
+	recorder, response = performMetricsThreshold(t, map[string]interface{}{
+		"channel_id": 404, "effective_model": "missing", "threshold": 3,
+	})
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.False(t, response.Success)
 }
 
 func TestModelRouteMetricsActionResetUnknownRejectsInvalidOrMissingTarget(t *testing.T) {

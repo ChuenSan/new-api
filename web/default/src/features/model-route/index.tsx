@@ -53,6 +53,10 @@ import {
   resetRuntimeLearning,
   updateModelRoutePolicyPriority,
 } from './api'
+import {
+  CircuitBreakerSettings,
+  RateLimitThresholdEditor,
+} from './components/circuit-breaker-settings'
 import { PolicySortableGroup } from './components/policy-sortable-group'
 import {
   type BatchMetricsAction,
@@ -882,6 +886,7 @@ export function ModelRouteAdmin() {
         </div>
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
+        <CircuitBreakerSettings />
         <Tabs
           value={tab}
           onValueChange={(v) => setTab(v as 'policies' | 'metrics')}
@@ -1049,7 +1054,7 @@ export function ModelRouteAdmin() {
               </div>
             )}
             <div className='overflow-x-auto rounded-md border'>
-              <table className='w-full min-w-[1080px] text-sm'>
+              <table className='w-full min-w-[1260px] text-sm'>
                 <thead className='bg-muted/40 text-left'>
                   <tr>
                     <th className='text-muted-foreground w-10 p-2.5 font-medium'>
@@ -1092,6 +1097,9 @@ export function ModelRouteAdmin() {
                     </th>
                     <th className='text-muted-foreground p-2.5 font-medium'>
                       {t('Last success')}
+                    </th>
+                    <th className='text-muted-foreground p-2.5 font-medium'>
+                      {t('429 threshold override')}
                     </th>
                     <th className='text-muted-foreground p-2.5 font-medium'>
                       {t('Actions')}
@@ -1178,6 +1186,9 @@ export function ModelRouteAdmin() {
                           {fmtTs(row.last_success_at)}
                         </td>
                         <td className='p-2.5'>
+                          <RateLimitThresholdEditor row={row} />
+                        </td>
+                        <td className='p-2.5'>
                           <div className='flex flex-wrap items-center gap-1.5'>
                             <Select
                               key={`${key}:${rowActionKey}`}
@@ -1250,7 +1261,7 @@ export function ModelRouteAdmin() {
                   {!metricsQuery.isLoading && metrics.length === 0 && (
                     <tr>
                       <td
-                        colSpan={12}
+                        colSpan={13}
                         className='text-muted-foreground p-6 text-center'
                       >
                         {t('No metrics')}

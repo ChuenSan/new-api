@@ -1,10 +1,12 @@
 package modelroute
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -177,4 +179,147 @@ func TestRateLimitUsesRetryAfter(t *testing.T) {
 	ApplyTransition(m, EventRateLimited, 120)
 	require.Equal(t, model.RouteRateLimited, m.State())
 	assert.Equal(t, base.Add(120*time.Second).Unix(), m.CooldownUntilTime().Unix())
+}
+
+func TestRateLimitTripsOpenAtConfiguredThreshold(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	withFrozenNow(t, base)
+	GlobalMetricsRuntime.Clear()
+	GlobalRoles.Clear()
+
+	settings := operation_setting.GetModelRouteSetting()
+	original := settings.RateLimitCircuitBreakerThreshold
+	settings.RateLimitCircuitBreakerThreshold = 3
+	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
+
+	m := &model.ChannelModelMetrics{
+		ChannelID: 6, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	}
+	ApplyTransition(m, EventRateLimited, 0)
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, model.RouteRateLimited, m.State())
+	assert.Equal(t, 2, m.ConsecutiveFailures)
+
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, model.RouteOpen, m.State())
+	assert.Equal(t, 3, m.ConsecutiveFailures)
+}
+
+func TestRateLimitSuccessResetsConsecutiveFailures(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	withFrozenNow(t, base)
+	GlobalMetricsRuntime.Clear()
+
+	settings := operation_setting.GetModelRouteSetting()
+	original := settings.RateLimitCircuitBreakerThreshold
+	settings.RateLimitCircuitBreakerThreshold = 3
+	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
+
+	m := &model.ChannelModelMetrics{
+		ChannelID: 7, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	}
+	ApplyTransition(m, EventRateLimited, 0)
+	ApplyTransition(m, EventRateLimited, 0)
+	ApplyTransition(m, EventProductionSuccess, 0)
+	assert.Equal(t, 0, m.ConsecutiveFailures)
+
+	ApplyTransition(m, EventRateLimited, 0)
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, model.RouteRateLimited, m.State())
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, model.RouteOpen, m.State())
+}
+
+func TestRateLimitThresholdOnlyCountsConsecutive429(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	withFrozenNow(t, base)
+	GlobalMetricsRuntime.Clear()
+
+	settings := operation_setting.GetModelRouteSetting()
+	original := settings.RateLimitCircuitBreakerThreshold
+	settings.RateLimitCircuitBreakerThreshold = 3
+	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
+
+	m := &model.ChannelModelMetrics{
+		ChannelID: 8, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	}
+	ApplyTransition(m, EventTemporaryFail, 0)
+	ApplyTransition(m, EventRateLimited, 0)
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, model.RouteRateLimited, m.State())
+	assert.Equal(t, 2, m.ConsecutiveRateLimitFailures)
+
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, model.RouteOpen, m.State())
+	assert.Equal(t, 3, m.ConsecutiveRateLimitFailures)
+}
+
+func TestRateLimitCounterIsScopedPerRouteAndSafeForConcurrentUpdates(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	withFrozenNow(t, base)
+	GlobalMetricsRuntime.Clear()
+
+	settings := operation_setting.GetModelRouteSetting()
+	original := settings.RateLimitCircuitBreakerThreshold
+	settings.RateLimitCircuitBreakerThreshold = 3
+	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
+
+	m1 := &model.ChannelModelMetrics{
+		ChannelID: 9, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	}
+	m2 := &model.ChannelModelMetrics{
+		ChannelID: 10, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	}
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ApplyTransition(m1, EventRateLimited, 0)
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, model.RouteOpen, m1.State())
+	assert.Equal(t, 3, m1.ConsecutiveRateLimitFailures)
+	ApplyTransition(m2, EventRateLimited, 0)
+	assert.Equal(t, model.RouteRateLimited, m2.State())
+	assert.Equal(t, 1, m2.ConsecutiveRateLimitFailures)
+}
+
+func TestRateLimitThresholdUsesRouteOverrideBeforeGlobalFallback(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	withFrozenNow(t, base)
+	GlobalMetricsRuntime.Clear()
+
+	settings := operation_setting.GetModelRouteSetting()
+	original := settings.RateLimitCircuitBreakerThreshold
+	settings.RateLimitCircuitBreakerThreshold = 3
+	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
+	invalidOverride := 2
+	assert.Equal(t, 3, GetRateLimitCircuitBreakerThreshold(&model.ChannelModelMetrics{
+		RateLimitCircuitBreakerThreshold: &invalidOverride,
+	}))
+
+	override := 5
+	m := &model.ChannelModelMetrics{
+		ChannelID: 11, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+		RateLimitCircuitBreakerThreshold: &override,
+	}
+	for range 4 {
+		ApplyTransition(m, EventRateLimited, 0)
+	}
+	assert.Equal(t, model.RouteRateLimited, m.State())
+	assert.Equal(t, 4, m.ConsecutiveRateLimitFailures)
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, model.RouteOpen, m.State())
+
+	fallback := &model.ChannelModelMetrics{
+		ChannelID: 12, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	}
+	ApplyTransition(fallback, EventRateLimited, 0)
+	ApplyTransition(fallback, EventRateLimited, 0)
+	assert.Equal(t, model.RouteRateLimited, fallback.State())
+	ApplyTransition(fallback, EventRateLimited, 0)
+	assert.Equal(t, model.RouteOpen, fallback.State())
 }

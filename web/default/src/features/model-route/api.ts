@@ -25,6 +25,7 @@ import type {
   ModelPolicyPriorityMutationResponse,
   ReorderModelRoutePoliciesRequest,
   ResetLearningRequest,
+  UpdateRateLimitCircuitBreakerThresholdRequest,
   UpdatePolicyPriorityRequest,
 } from './types'
 
@@ -54,6 +55,21 @@ export async function listModelRouteMetrics(params?: {
   channel_id?: number
 }): Promise<ModelRouteMetricsResponse> {
   const res = await api.get('/api/model_route/metrics', { params })
+  return res.data
+}
+
+export async function updateRateLimitCircuitBreakerThreshold(
+  data: UpdateRateLimitCircuitBreakerThresholdRequest
+): Promise<{
+  success: boolean
+  message: string
+  data?: {
+    channel_id: number
+    effective_model: string
+    threshold: number | null
+  }
+}> {
+  const res = await api.put('/api/model_route/metrics/threshold', data)
   return res.data
 }
 

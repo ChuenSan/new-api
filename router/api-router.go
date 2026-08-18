@@ -239,6 +239,7 @@ func SetApiRouter(router *gin.Engine) {
 			modelRoute.PUT("/policies/priority", controller.UpdateModelRoutePolicyPriority)
 			modelRoute.PUT("/policies/reorder", controller.ReorderModelRoutePolicies)
 			modelRoute.GET("/metrics", controller.ListModelRouteMetrics)
+			modelRoute.PUT("/metrics/threshold", controller.UpdateModelRouteMetricsThreshold)
 			modelRoute.POST("/metrics/action", controller.ModelRouteMetricsAction)
 		}
 		registerChannelRoutes(apiRouter)

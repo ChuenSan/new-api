@@ -207,12 +207,14 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 
 	switch event {
 	case EventManualDisable:
+		m.ConsecutiveRateLimitFailures = 0
 		m.SetState(model.RouteManuallyDisabled)
 		m.SetCooldownUntil(time.Time{})
 		GlobalRoles.Set(mk, model.RoleNone)
 
 	case EventRestoreAuto:
 		if before == model.RouteManuallyDisabled {
+			m.ConsecutiveRateLimitFailures = 0
 			m.SetState(model.RouteProbing)
 			m.BackoffLevel = 0
 			m.SetCooldownUntil(time.Time{})
@@ -232,8 +234,15 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 
 	case EventRateLimited:
 		m.SetLastErrorClass(model.ErrorTemporary)
-		m.SetState(model.RouteRateLimited)
 		m.LastFailureAt = &ts
+		m.ConsecutiveFailures++
+		m.ConsecutiveRateLimitFailures++
+		if shouldOpenOnRateLimit(m) {
+			openCircuit(m, 0)
+			GlobalRoles.Set(mk, model.RoleNone)
+			break
+		}
+		m.SetState(model.RouteRateLimited)
 		level := m.BackoffLevel
 		if level < 0 {
 			level = 0
@@ -251,14 +260,15 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 		}
 		GlobalRoles.Set(mk, model.RoleNone)
 		// bump rate limit ema later in metrics package; mark sample
-		m.ConsecutiveFailures++
 
 	case EventDeterministicFail:
+		m.ConsecutiveRateLimitFailures = 0
 		m.SetLastErrorClass(model.ErrorDeterministic)
 		openCircuit(m, 0)
 		GlobalRoles.Set(mk, model.RoleNone)
 
 	case EventTemporaryFail:
+		m.ConsecutiveRateLimitFailures = 0
 		m.SetLastErrorClass(model.ErrorTemporary)
 		m.ConsecutiveFailures++
 		m.LastFailureAt = &ts
@@ -269,10 +279,12 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 		}
 
 	case EventTripOpen:
+		m.ConsecutiveRateLimitFailures = 0
 		openCircuit(m, 0)
 		GlobalRoles.Set(mk, model.RoleNone)
 
 	case EventProbeSuccess:
+		m.ConsecutiveRateLimitFailures = 0
 		m.LastProbeAt = &ts
 		m.LastSuccessAt = &ts
 		switch before {
@@ -292,6 +304,7 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 		}
 
 	case EventProbeFail:
+		m.ConsecutiveRateLimitFailures = 0
 		m.LastProbeAt = &ts
 		m.LastFailureAt = &ts
 		// stay PROBING or re-open with higher backoff depending on error class set by caller
@@ -306,6 +319,7 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 		m.LastSuccessAt = &ts
 		m.LastRequestAt = &ts
 		m.ConsecutiveFailures = 0
+		m.ConsecutiveRateLimitFailures = 0
 		GlobalMetricsRuntime.clearFailWindow(mk)
 		switch before {
 		case model.RouteUnknown, model.RouteProbing:
@@ -371,6 +385,10 @@ func shouldOpenOnTemporary(m *model.ChannelModelMetrics) bool {
 		return true
 	}
 	return GlobalMetricsRuntime.tempFailuresInWindow(m.MetricsKey()) >= model.DefaultTemporaryFailureWindowThresh
+}
+
+func shouldOpenOnRateLimit(m *model.ChannelModelMetrics) bool {
+	return m != nil && m.ConsecutiveRateLimitFailures >= GetRateLimitCircuitBreakerThreshold(m)
 }
 
 // MaybeAdvanceCooldown moves RATE_LIMITED/OPEN → PROBING when cooldown elapsed (PRD §26).

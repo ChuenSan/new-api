@@ -143,6 +143,11 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
 			return
 		}
+	case "model_route_setting.rate_limit_circuit_breaker_threshold":
+		if _, err := operation_setting.ValidateRateLimitCircuitBreakerThreshold(option.Value.(string)); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
 			common.ApiErrorMsg(c, "合规确认字段不允许通过通用设置接口修改")

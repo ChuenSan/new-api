@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS channel_model_metrics (
     last_error_class VARCHAR(16) NULL,
     cooldown_until BIGINT NULL,
     backoff_level INT NOT NULL DEFAULT 0,
+    rate_limit_circuit_breaker_threshold INT NULL,
     production_sample_count BIGINT NOT NULL DEFAULT 0,
     shadow_sample_count BIGINT NOT NULL DEFAULT 0,
     production_success_ema DOUBLE PRECISION NULL,
