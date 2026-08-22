@@ -35,7 +35,6 @@ func TestResetRouteToUnknownClearsOnlyTargetRuntimeState(t *testing.T) {
 		BackoffLevel: 4, ExperienceScore: &runtimeScore, ProductionSampleCount: 12,
 	}
 	GlobalMetricsRuntime.Put(runtime)
-	GlobalMetricsRuntime.recordTempFailure(target)
 	GlobalCalibrationPersister.MarkDirty(target)
 	GlobalRoles.Set(target, model.RolePrimary)
 	otherModelRuntime := &model.ChannelModelMetrics{
@@ -48,8 +47,6 @@ func TestResetRouteToUnknownClearsOnlyTargetRuntimeState(t *testing.T) {
 	}
 	GlobalMetricsRuntime.Put(otherModelRuntime)
 	GlobalMetricsRuntime.Put(otherChannelRuntime)
-	GlobalMetricsRuntime.recordTempFailure(otherModel)
-	GlobalMetricsRuntime.recordTempFailure(otherChannel)
 	GlobalCalibrationPersister.MarkDirty(otherModel)
 	GlobalCalibrationPersister.MarkDirty(otherChannel)
 	GlobalRoles.Set(otherModel, model.RolePrimary)
@@ -86,12 +83,9 @@ func TestResetRouteToUnknownClearsOnlyTargetRuntimeState(t *testing.T) {
 	require.NotNil(t, stored.ExperienceScore)
 	assert.InDelta(t, runtimeScore, *stored.ExperienceScore, 1e-9)
 	assert.Nil(t, GlobalMetricsRuntime.Get(target))
-	assert.Zero(t, GlobalMetricsRuntime.tempFailuresInWindow(target))
 	assert.Equal(t, model.RoleNone, GlobalRoles.Get(target))
 	assert.Same(t, otherModelRuntime, GlobalMetricsRuntime.Get(otherModel))
 	assert.Same(t, otherChannelRuntime, GlobalMetricsRuntime.Get(otherChannel))
-	assert.Equal(t, 1, GlobalMetricsRuntime.tempFailuresInWindow(otherModel))
-	assert.Equal(t, 1, GlobalMetricsRuntime.tempFailuresInWindow(otherChannel))
 	assert.Equal(t, model.RolePrimary, GlobalRoles.Get(otherModel))
 	assert.Equal(t, model.RoleOverflow, GlobalRoles.Get(otherChannel))
 	GlobalCalibrationPersister.mu.Lock()
@@ -129,6 +123,7 @@ func TestResetRouteToUnknownMissingRowDoesNotEvictRuntime(t *testing.T) {
 func TestApplyTransitionReloadsResetStateBeforeInFlightOutcome(t *testing.T) {
 	clearRouteTables(t)
 	GlobalMetricsRuntime.Clear()
+	withCircuitBreakerThreshold(t, 3)
 	mk := MakeMetricsKey(31, "effective")
 	stale := &model.ChannelModelMetrics{
 		ChannelID: mk.ChannelID, EffectiveModel: mk.EffectiveModel,
@@ -147,7 +142,9 @@ func TestApplyTransitionReloadsResetStateBeforeInFlightOutcome(t *testing.T) {
 	assert.Equal(t, model.RouteHealthy, stored.State())
 
 	require.NoError(t, ResetRouteToUnknown(mk.ChannelID, mk.EffectiveModel, nil))
-	assert.True(t, ApplyTransition(stale, EventDeterministicFail, 0))
+	for range 3 {
+		ApplyTransition(stale, EventDeterministicFail, 0)
+	}
 	assert.Equal(t, model.RouteOpen, stale.State())
 	assert.Positive(t, stale.BackoffLevel)
 	stored, err = model.GetChannelModelMetrics(mk.ChannelID, mk.EffectiveModel)

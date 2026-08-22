@@ -8,7 +8,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func withFrozenNow(t *testing.T, ts time.Time) {
@@ -18,57 +17,75 @@ func withFrozenNow(t *testing.T, ts time.Time) {
 	t.Cleanup(func() { now = prev })
 }
 
-func TestApplyTransitionRateLimitedBackoff(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	withFrozenNow(t, base)
+func withCircuitBreakerThreshold(t *testing.T, threshold int) {
+	t.Helper()
+	settings := operation_setting.GetModelRouteSetting()
+	original := settings.RateLimitCircuitBreakerThreshold
+	settings.RateLimitCircuitBreakerThreshold = threshold
+	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
+}
+
+func TestProductionFailuresShareConfiguredThreshold(t *testing.T) {
+	withFrozenNow(t, time.Unix(1_700_000_000, 0))
 	GlobalMetricsRuntime.Clear()
 	GlobalRoles.Clear()
+	withCircuitBreakerThreshold(t, 4)
 
 	m := &model.ChannelModelMetrics{
 		ChannelID: 1, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
 	}
-	changed := ApplyTransition(m, EventRateLimited, 0)
-	assert.True(t, changed)
-	assert.Equal(t, model.RouteRateLimited, m.State())
-	assert.Equal(t, 1, m.BackoffLevel)
-	// default first ladder 60s
-	assert.Equal(t, base.Add(60*time.Second).Unix(), m.CooldownUntilTime().Unix())
-
-	// advance past cooldown
-	withFrozenNow(t, base.Add(61*time.Second))
-	assert.True(t, MaybeAdvanceCooldown(m))
-	assert.Equal(t, model.RouteProbing, m.State())
-}
-
-func TestDeterministicFailOpensImmediately(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	withFrozenNow(t, base)
-	GlobalMetricsRuntime.Clear()
-
-	m := &model.ChannelModelMetrics{
-		ChannelID: 1, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	for i, event := range []TransitionEvent{
+		EventDeterministicFail, EventRateLimited, EventTemporaryFail, EventTemporaryFail,
+	} {
+		ApplyTransition(m, event, 120)
+		assert.Equal(t, i+1, m.ConsecutiveFailures)
+		if i < 3 {
+			assert.Equal(t, model.RouteHealthy, m.State())
+		}
 	}
-	ApplyTransition(m, EventDeterministicFail, 0)
 	assert.Equal(t, model.RouteOpen, m.State())
-	assert.Equal(t, model.ErrorDeterministic, m.GetLastErrorClass())
-	assert.Equal(t, base.Add(30*time.Second).Unix(), m.CooldownUntilTime().Unix())
+	assert.Equal(t, 4, m.ConsecutiveFailures)
+	assert.Zero(t, m.ConsecutiveRateLimitFailures)
 }
 
-func TestTemporaryFailNeedsThreshold(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	withFrozenNow(t, base)
+func TestProductionSuccessResetsConsecutiveFailures(t *testing.T) {
+	withFrozenNow(t, time.Unix(1_700_000_000, 0))
 	GlobalMetricsRuntime.Clear()
+	withCircuitBreakerThreshold(t, 3)
 
 	m := &model.ChannelModelMetrics{
 		ChannelID: 2, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
 	}
+	ApplyTransition(m, EventDeterministicFail, 0)
 	ApplyTransition(m, EventTemporaryFail, 0)
-	assert.Equal(t, model.RouteHealthy, m.State()) // consecutive=1 < 2
-	assert.Equal(t, 1, m.ConsecutiveFailures)
+	assert.Equal(t, 2, m.ConsecutiveFailures)
 
-	ApplyTransition(m, EventTemporaryFail, 0)
-	assert.Equal(t, model.RouteOpen, m.State()) // consecutive=2
-	assert.Equal(t, model.ErrorTemporary, m.GetLastErrorClass())
+	ApplyTransition(m, EventProductionSuccess, 0)
+	assert.Equal(t, 0, m.ConsecutiveFailures)
+	assert.Equal(t, model.RouteHealthy, m.State())
+
+	ApplyTransition(m, EventRateLimited, 0)
+	assert.Equal(t, 1, m.ConsecutiveFailures)
+	assert.Equal(t, model.RouteHealthy, m.State())
+}
+
+func TestProductionFailureThreshold999(t *testing.T) {
+	withFrozenNow(t, time.Unix(1_700_000_000, 0))
+	GlobalMetricsRuntime.Clear()
+	withCircuitBreakerThreshold(t, 999)
+
+	m := &model.ChannelModelMetrics{
+		ChannelID: 3, EffectiveModel: "m", RouteState: string(model.RouteHealthy),
+	}
+	for i := 0; i < 998; i++ {
+		ApplyTransition(m, EventTemporaryFail, 0)
+	}
+	assert.Equal(t, 998, m.ConsecutiveFailures)
+	assert.NotEqual(t, model.RouteOpen, m.State())
+
+	ApplyTransition(m, EventDeterministicFail, 0)
+	assert.Equal(t, 999, m.ConsecutiveFailures)
+	assert.Equal(t, model.RouteOpen, m.State())
 }
 
 func TestRecoverFlow(t *testing.T) {
@@ -122,21 +139,31 @@ func TestManualDisableAndRestore(t *testing.T) {
 }
 
 func TestClassifyHTTPStatus(t *testing.T) {
-	c, e := ClassifyHTTPStatus(429)
-	assert.Equal(t, model.ErrorTemporary, c)
-	assert.Equal(t, EventRateLimited, e)
+	tests := []struct {
+		status int
+		class  model.ErrorClass
+		event  TransitionEvent
+	}{
+		{status: 0, class: model.ErrorTemporary, event: EventTemporaryFail},
+		{status: 201, class: model.ErrorTemporary, event: EventTemporaryFail},
+		{status: 204, class: model.ErrorTemporary, event: EventTemporaryFail},
+		{status: 401, class: model.ErrorDeterministic, event: EventDeterministicFail},
+		{status: 403, class: model.ErrorDeterministic, event: EventDeterministicFail},
+		{status: 404, class: model.ErrorDeterministic, event: EventDeterministicFail},
+		{status: 429, class: model.ErrorTemporary, event: EventRateLimited},
+		{status: 500, class: model.ErrorTemporary, event: EventTemporaryFail},
+		{status: 503, class: model.ErrorTemporary, event: EventTemporaryFail},
+	}
+	for _, tt := range tests {
+		c, e := ClassifyHTTPStatus(tt.status)
+		assert.Equal(t, tt.class, c, "status=%d", tt.status)
+		assert.Equal(t, tt.event, e, "status=%d", tt.status)
+		assert.NotEqual(t, EventProductionSuccess, e, "status=%d", tt.status)
+	}
 
-	c, e = ClassifyHTTPStatus(401)
-	assert.Equal(t, model.ErrorDeterministic, c)
-	assert.Equal(t, EventDeterministicFail, e)
-
-	c, e = ClassifyHTTPStatus(503)
-	assert.Equal(t, model.ErrorTemporary, c)
-	assert.Equal(t, EventTemporaryFail, e)
-
-	c, e = ClassifyHTTPStatus(200)
+	c, e := ClassifyHTTPStatus(200)
 	assert.Equal(t, EventProductionSuccess, e)
-	assert.Equal(t, model.ErrorClass(""), c)
+	assert.Empty(t, c)
 }
 
 func TestIsRouteStale(t *testing.T) {
@@ -172,16 +199,19 @@ func TestIsProductiveState(t *testing.T) {
 	assert.False(t, IsProductiveState(model.RouteProbing))
 }
 
-func TestRateLimitUsesRetryAfter(t *testing.T) {
-	base := time.Unix(1_700_000_000, 0)
-	withFrozenNow(t, base)
+func TestRateLimitEventUsesSharedFailureCounter(t *testing.T) {
+	withFrozenNow(t, time.Unix(1_700_000_000, 0))
+	GlobalMetricsRuntime.Clear()
+	withCircuitBreakerThreshold(t, 3)
 	m := &model.ChannelModelMetrics{ChannelID: 1, EffectiveModel: "m", RouteState: string(model.RouteHealthy)}
 	ApplyTransition(m, EventRateLimited, 120)
-	require.Equal(t, model.RouteRateLimited, m.State())
-	assert.Equal(t, base.Add(120*time.Second).Unix(), m.CooldownUntilTime().Unix())
+	assert.Equal(t, model.RouteHealthy, m.State())
+	assert.Nil(t, m.CooldownUntil)
+	assert.Equal(t, 1, m.ConsecutiveFailures)
+	assert.Zero(t, m.ConsecutiveRateLimitFailures)
 }
 
-func TestRateLimitTripsOpenAtConfiguredThreshold(t *testing.T) {
+func TestFailuresTripOpenAtConfiguredThreshold(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	withFrozenNow(t, base)
 	GlobalMetricsRuntime.Clear()
@@ -197,7 +227,7 @@ func TestRateLimitTripsOpenAtConfiguredThreshold(t *testing.T) {
 	}
 	ApplyTransition(m, EventRateLimited, 0)
 	ApplyTransition(m, EventRateLimited, 0)
-	assert.Equal(t, model.RouteRateLimited, m.State())
+	assert.Equal(t, model.RouteHealthy, m.State())
 	assert.Equal(t, 2, m.ConsecutiveFailures)
 
 	ApplyTransition(m, EventRateLimited, 0)
@@ -205,7 +235,7 @@ func TestRateLimitTripsOpenAtConfiguredThreshold(t *testing.T) {
 	assert.Equal(t, 3, m.ConsecutiveFailures)
 }
 
-func TestRateLimitSuccessResetsConsecutiveFailures(t *testing.T) {
+func TestFailureSuccessResetsConsecutiveFailures(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	withFrozenNow(t, base)
 	GlobalMetricsRuntime.Clear()
@@ -225,19 +255,19 @@ func TestRateLimitSuccessResetsConsecutiveFailures(t *testing.T) {
 
 	ApplyTransition(m, EventRateLimited, 0)
 	ApplyTransition(m, EventRateLimited, 0)
-	assert.Equal(t, model.RouteRateLimited, m.State())
+	assert.Equal(t, model.RouteHealthy, m.State())
 	ApplyTransition(m, EventRateLimited, 0)
 	assert.Equal(t, model.RouteOpen, m.State())
 }
 
-func TestRateLimitThresholdOnlyCountsConsecutive429(t *testing.T) {
+func TestMixedFailuresShareRateLimitThreshold(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	withFrozenNow(t, base)
 	GlobalMetricsRuntime.Clear()
 
 	settings := operation_setting.GetModelRouteSetting()
 	original := settings.RateLimitCircuitBreakerThreshold
-	settings.RateLimitCircuitBreakerThreshold = 3
+	settings.RateLimitCircuitBreakerThreshold = 4
 	t.Cleanup(func() { settings.RateLimitCircuitBreakerThreshold = original })
 
 	m := &model.ChannelModelMetrics{
@@ -246,15 +276,16 @@ func TestRateLimitThresholdOnlyCountsConsecutive429(t *testing.T) {
 	ApplyTransition(m, EventTemporaryFail, 0)
 	ApplyTransition(m, EventRateLimited, 0)
 	ApplyTransition(m, EventRateLimited, 0)
-	assert.Equal(t, model.RouteRateLimited, m.State())
-	assert.Equal(t, 2, m.ConsecutiveRateLimitFailures)
+	assert.Equal(t, model.RouteHealthy, m.State())
+	assert.Equal(t, 3, m.ConsecutiveFailures)
+	assert.Zero(t, m.ConsecutiveRateLimitFailures)
 
 	ApplyTransition(m, EventRateLimited, 0)
 	assert.Equal(t, model.RouteOpen, m.State())
-	assert.Equal(t, 3, m.ConsecutiveRateLimitFailures)
+	assert.Equal(t, 4, m.ConsecutiveFailures)
 }
 
-func TestRateLimitCounterIsScopedPerRouteAndSafeForConcurrentUpdates(t *testing.T) {
+func TestFailureCounterIsScopedPerRouteAndSafeForConcurrentUpdates(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	withFrozenNow(t, base)
 	GlobalMetricsRuntime.Clear()
@@ -281,13 +312,15 @@ func TestRateLimitCounterIsScopedPerRouteAndSafeForConcurrentUpdates(t *testing.
 	wg.Wait()
 
 	assert.Equal(t, model.RouteOpen, m1.State())
-	assert.Equal(t, 3, m1.ConsecutiveRateLimitFailures)
+	assert.Equal(t, 3, m1.ConsecutiveFailures)
+	assert.Zero(t, m1.ConsecutiveRateLimitFailures)
 	ApplyTransition(m2, EventRateLimited, 0)
-	assert.Equal(t, model.RouteRateLimited, m2.State())
-	assert.Equal(t, 1, m2.ConsecutiveRateLimitFailures)
+	assert.Equal(t, model.RouteHealthy, m2.State())
+	assert.Equal(t, 1, m2.ConsecutiveFailures)
+	assert.Zero(t, m2.ConsecutiveRateLimitFailures)
 }
 
-func TestRateLimitThresholdUsesRouteOverrideBeforeGlobalFallback(t *testing.T) {
+func TestFailureThresholdUsesRouteOverrideBeforeGlobalFallback(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	withFrozenNow(t, base)
 	GlobalMetricsRuntime.Clear()
@@ -309,8 +342,9 @@ func TestRateLimitThresholdUsesRouteOverrideBeforeGlobalFallback(t *testing.T) {
 	for range 4 {
 		ApplyTransition(m, EventRateLimited, 0)
 	}
-	assert.Equal(t, model.RouteRateLimited, m.State())
-	assert.Equal(t, 4, m.ConsecutiveRateLimitFailures)
+	assert.Equal(t, model.RouteHealthy, m.State())
+	assert.Equal(t, 4, m.ConsecutiveFailures)
+	assert.Zero(t, m.ConsecutiveRateLimitFailures)
 	ApplyTransition(m, EventRateLimited, 0)
 	assert.Equal(t, model.RouteOpen, m.State())
 
@@ -319,7 +353,7 @@ func TestRateLimitThresholdUsesRouteOverrideBeforeGlobalFallback(t *testing.T) {
 	}
 	ApplyTransition(fallback, EventRateLimited, 0)
 	ApplyTransition(fallback, EventRateLimited, 0)
-	assert.Equal(t, model.RouteRateLimited, fallback.State())
+	assert.Equal(t, model.RouteHealthy, fallback.State())
 	ApplyTransition(fallback, EventRateLimited, 0)
 	assert.Equal(t, model.RouteOpen, fallback.State())
 }

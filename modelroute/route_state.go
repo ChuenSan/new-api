@@ -1,6 +1,7 @@
 package modelroute
 
 import (
+	"net/http"
 	"sync"
 	"time"
 
@@ -49,15 +50,12 @@ type RuntimeMetricsCache struct {
 	mu        sync.RWMutex
 	data      map[string]*model.ChannelModelMetrics
 	resetKeys map[string]struct{}
-	// recent temporary failures window per key (timestamps unix nano)
-	failWindow map[string][]int64
 }
 
 // GlobalMetricsRuntime is the process-local metrics overlay.
 var GlobalMetricsRuntime = &RuntimeMetricsCache{
-	data:       make(map[string]*model.ChannelModelMetrics),
-	resetKeys:  make(map[string]struct{}),
-	failWindow: make(map[string][]int64),
+	data:      make(map[string]*model.ChannelModelMetrics),
+	resetKeys: make(map[string]struct{}),
 }
 
 func (c *RuntimeMetricsCache) Get(mk model.MetricsKey) *model.ChannelModelMetrics {
@@ -83,7 +81,6 @@ func (c *RuntimeMetricsCache) Clear() {
 	defer c.mu.Unlock()
 	c.data = make(map[string]*model.ChannelModelMetrics)
 	c.resetKeys = make(map[string]struct{})
-	c.failWindow = make(map[string][]int64)
 }
 
 func (c *RuntimeMetricsCache) Delete(mk model.MetricsKey) {
@@ -91,7 +88,6 @@ func (c *RuntimeMetricsCache) Delete(mk model.MetricsKey) {
 	defer c.mu.Unlock()
 	key := mk.String()
 	delete(c.data, key)
-	delete(c.failWindow, key)
 	c.resetKeys[key] = struct{}{}
 }
 
@@ -100,31 +96,6 @@ func (c *RuntimeMetricsCache) needsRefresh(mk model.MetricsKey) bool {
 	defer c.mu.RUnlock()
 	_, ok := c.resetKeys[mk.String()]
 	return ok
-}
-
-func (c *RuntimeMetricsCache) recordTempFailure(mk model.MetricsKey) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	k := mk.String()
-	ts := now().UnixNano()
-	w := append(c.failWindow[k], ts)
-	// keep last window_size
-	if len(w) > model.DefaultTemporaryFailureWindowSize {
-		w = w[len(w)-model.DefaultTemporaryFailureWindowSize:]
-	}
-	c.failWindow[k] = w
-}
-
-func (c *RuntimeMetricsCache) clearFailWindow(mk model.MetricsKey) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.failWindow, mk.String())
-}
-
-func (c *RuntimeMetricsCache) tempFailuresInWindow(mk model.MetricsKey) int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.failWindow[mk.String()])
 }
 
 // LoadOrEnsureMetrics loads DB row into runtime cache.
@@ -232,48 +203,18 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 			m.SetCooldownUntil(time.Time{})
 		}
 
-	case EventRateLimited:
-		m.SetLastErrorClass(model.ErrorTemporary)
-		m.LastFailureAt = &ts
+	case EventRateLimited, EventDeterministicFail, EventTemporaryFail:
+		// These legacy event names preserve error classification only. All
+		// production failures share the same consecutive-failure threshold.
+		if event == EventDeterministicFail {
+			m.SetLastErrorClass(model.ErrorDeterministic)
+		} else {
+			m.SetLastErrorClass(model.ErrorTemporary)
+		}
 		m.ConsecutiveFailures++
-		m.ConsecutiveRateLimitFailures++
-		if shouldOpenOnRateLimit(m) {
-			openCircuit(m, 0)
-			GlobalRoles.Set(mk, model.RoleNone)
-			break
-		}
-		m.SetState(model.RouteRateLimited)
-		level := m.BackoffLevel
-		if level < 0 {
-			level = 0
-		}
-		if level >= len(model.DefaultRateLimitBackoffSeconds) {
-			level = len(model.DefaultRateLimitBackoffSeconds) - 1
-		}
-		cd := model.DefaultRateLimitBackoffSeconds[level]
-		if retryAfterSec > 0 {
-			cd = retryAfterSec
-		}
-		m.SetCooldownUntil(now().Add(time.Duration(cd) * time.Second))
-		if m.BackoffLevel < len(model.DefaultRateLimitBackoffSeconds)-1 {
-			m.BackoffLevel++
-		}
-		GlobalRoles.Set(mk, model.RoleNone)
-		// bump rate limit ema later in metrics package; mark sample
-
-	case EventDeterministicFail:
 		m.ConsecutiveRateLimitFailures = 0
-		m.SetLastErrorClass(model.ErrorDeterministic)
-		openCircuit(m, 0)
-		GlobalRoles.Set(mk, model.RoleNone)
-
-	case EventTemporaryFail:
-		m.ConsecutiveRateLimitFailures = 0
-		m.SetLastErrorClass(model.ErrorTemporary)
-		m.ConsecutiveFailures++
 		m.LastFailureAt = &ts
-		GlobalMetricsRuntime.recordTempFailure(mk)
-		if shouldOpenOnTemporary(m) {
+		if m.ConsecutiveFailures >= GetRateLimitCircuitBreakerThreshold(m) {
 			openCircuit(m, 0)
 			GlobalRoles.Set(mk, model.RoleNone)
 		}
@@ -299,7 +240,6 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 				m.SetState(model.RouteHealthy)
 				m.BackoffLevel = 0
 				m.RecoverSuccessCount = 0
-				GlobalMetricsRuntime.clearFailWindow(mk)
 			}
 		}
 
@@ -320,7 +260,6 @@ func applyTransitionLocked(m *model.ChannelModelMetrics, event TransitionEvent, 
 		m.LastRequestAt = &ts
 		m.ConsecutiveFailures = 0
 		m.ConsecutiveRateLimitFailures = 0
-		GlobalMetricsRuntime.clearFailWindow(mk)
 		switch before {
 		case model.RouteUnknown, model.RouteProbing:
 			m.SetState(model.RouteHealthy)
@@ -380,17 +319,6 @@ func openCircuit(m *model.ChannelModelMetrics, levelHint int) {
 	m.LastFailureAt = &ts
 }
 
-func shouldOpenOnTemporary(m *model.ChannelModelMetrics) bool {
-	if m.ConsecutiveFailures >= model.DefaultTemporaryFailureConsecutive {
-		return true
-	}
-	return GlobalMetricsRuntime.tempFailuresInWindow(m.MetricsKey()) >= model.DefaultTemporaryFailureWindowThresh
-}
-
-func shouldOpenOnRateLimit(m *model.ChannelModelMetrics) bool {
-	return m != nil && m.ConsecutiveRateLimitFailures >= GetRateLimitCircuitBreakerThreshold(m)
-}
-
 // MaybeAdvanceCooldown moves RATE_LIMITED/OPEN → PROBING when cooldown elapsed (PRD §26).
 func MaybeAdvanceCooldown(m *model.ChannelModelMetrics) bool {
 	if m == nil {
@@ -417,20 +345,38 @@ func maybeAdvanceCooldownLocked(m *model.ChannelModelMetrics) bool {
 	return false
 }
 
-// ClassifyHTTPStatus maps status to ErrorClass / events (PRD §24 / §25).
+// isSuccessfulProductionResult is the single production success predicate.
+func isSuccessfulProductionResult(success bool, statusCode int, streamInterrupted bool) bool {
+	return success && statusCode == http.StatusOK && !streamInterrupted
+}
+
+// classifyProductionFailure keeps error classes for metrics/display while
+// ensuring a failed request with status 200 cannot become a success event.
+func classifyProductionFailure(status int) (model.ErrorClass, TransitionEvent) {
+	class, event := ClassifyHTTPStatus(status)
+	if event == EventProductionSuccess {
+		return model.ErrorTemporary, EventTemporaryFail
+	}
+	return class, event
+}
+
+// ClassifyHTTPStatus maps status to ErrorClass / events. HTTP 200 is the only
+// successful status; every other status, including 0, is a failure.
 func ClassifyHTTPStatus(status int) (model.ErrorClass, TransitionEvent) {
 	switch {
-	case status == 429:
+	case status == http.StatusOK:
+		return "", EventProductionSuccess
+	case status == http.StatusTooManyRequests:
 		return model.ErrorTemporary, EventRateLimited
-	case status == 401 || status == 403 || status == 404:
+	case status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusNotFound:
 		return model.ErrorDeterministic, EventDeterministicFail
 	case status >= 500:
 		return model.ErrorTemporary, EventTemporaryFail
 	case status >= 400:
-		// other 4xx: treat deterministic (model/protocol issues)
+		// Other 4xx responses remain deterministic for metrics/display only.
 		return model.ErrorDeterministic, EventDeterministicFail
 	default:
-		return "", EventProductionSuccess
+		return model.ErrorTemporary, EventTemporaryFail
 	}
 }
 

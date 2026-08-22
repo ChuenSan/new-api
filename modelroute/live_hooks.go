@@ -12,8 +12,9 @@ type ProductionOutcome struct {
 	ChannelID      int64
 	RequestedModel string
 	MappingJSON    string
-	Success        bool
-	StatusCode     int
+	// Success means the relay completed normally; status must still be HTTP 200.
+	Success    bool
+	StatusCode int
 	// StreamInterrupted is true when first byte was already sent then failed (PRD §11.1).
 	StreamInterrupted bool
 	TTFT              time.Duration
@@ -99,16 +100,8 @@ func ApplyProductionOutcome(out ProductionOutcome) {
 		return
 	}
 
-	// Stream interrupted after first byte: record and do not treat as clean success.
-	if out.StreamInterrupted {
-		RecordStreamInterruptionSample(m, true)
-		RecordProductionFailureSample(m)
-		_ = RefreshExperienceScore(m)
-		GlobalCalibrationPersister.MarkDirty(mk)
-		return
-	}
-
-	if out.Success {
+	success := isSuccessfulProductionResult(out.Success, out.StatusCode, out.StreamInterrupted)
+	if success {
 		RecordProductionSuccessSample(m)
 		RecordTemporaryErrorSample(m, false)
 		RecordRateLimitSample(m, false)
@@ -127,11 +120,11 @@ func ApplyProductionOutcome(out ProductionOutcome) {
 	}
 
 	// failure path
-	RecordProductionFailureSample(m)
-	class, ev := ClassifyHTTPStatus(out.StatusCode)
-	if out.StatusCode == 0 {
-		class, ev = model.ErrorTemporary, EventTemporaryFail
+	if out.StreamInterrupted {
+		RecordStreamInterruptionSample(m, true)
 	}
+	RecordProductionFailureSample(m)
+	class, ev := classifyProductionFailure(out.StatusCode)
 	switch class {
 	case model.ErrorTemporary:
 		if ev == EventRateLimited {
@@ -206,7 +199,7 @@ func ApplyProductionOutcomeAsync(out ProductionOutcome) {
 	}
 	gopool.Go(func() {
 		ApplyProductionOutcome(out)
-		if out.Success {
+		if isSuccessfulProductionResult(out.Success, out.StatusCode, out.StreamInterrupted) {
 			eff, _ := ResolveEffectiveForChannel(out.ChannelID, out.RequestedModel, out.MappingJSON)
 			ScheduleShadowProbeAfterProduction(out.Shadow, out.ChannelID, eff)
 		}

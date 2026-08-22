@@ -15,28 +15,37 @@ type AttemptOutcome struct {
 	Event               TransitionEvent
 }
 
+// normalizeAttemptOutcome enforces the production success contract even when
+// a caller constructs AttemptOutcome directly instead of using ClassifyAttempt.
+func normalizeAttemptOutcome(out AttemptOutcome) AttemptOutcome {
+	if isSuccessfulProductionResult(out.Success, out.StatusCode, out.StreamInterrupted) {
+		out.Success = true
+		out.ErrorClass = ""
+		out.Event = EventProductionSuccess
+		return out
+	}
+
+	out.Success = false
+	// Production failures are always normalized from the raw outcome so a
+	// stale or caller-supplied success/manual event cannot bypass the breaker.
+	class, event := classifyProductionFailure(out.StatusCode)
+	if out.StreamInterrupted {
+		// A stream interruption is transport failure regardless of status.
+		class, event = model.ErrorTemporary, EventTemporaryFail
+	}
+	out.ErrorClass = class
+	out.Event = event
+	return out
+}
+
 // ClassifyAttempt maps raw attempt signals into state-machine event (PRD §11.1 / §24 / §25).
 func ClassifyAttempt(success bool, statusCode int, hasEmittedUserBytes bool, streamInterrupted bool) AttemptOutcome {
-	out := AttemptOutcome{
+	return normalizeAttemptOutcome(AttemptOutcome{
 		Success:             success,
 		HasEmittedUserBytes: hasEmittedUserBytes,
 		StatusCode:          statusCode,
 		StreamInterrupted:   streamInterrupted,
-	}
-	if success {
-		out.Event = EventProductionSuccess
-		return out
-	}
-	if streamInterrupted && hasEmittedUserBytes {
-		// cannot transparent-retry; record STREAM_INTERRUPTED (PRD §11.1)
-		out.Event = EventTemporaryFail
-		out.ErrorClass = model.ErrorTemporary
-		return out
-	}
-	class, ev := ClassifyHTTPStatus(statusCode)
-	out.ErrorClass = class
-	out.Event = ev
-	return out
+	})
 }
 
 // ApplyAttemptOutcome updates metrics/role after one try.
@@ -50,6 +59,7 @@ func ApplyAttemptOutcome(c *model.ResolvedRouteCandidate, out AttemptOutcome) (c
 	lock.Lock()
 	defer lock.Unlock()
 	c.Metrics = refreshMetricsLocked(c.Metrics)
+	out = normalizeAttemptOutcome(out)
 	if out.Success {
 		applyTransitionLocked(c.Metrics, EventProductionSuccess, 0)
 		// successful production validation → PRIMARY (BOOTSTRAP or first healthy)
@@ -60,24 +70,18 @@ func ApplyAttemptOutcome(c *model.ResolvedRouteCandidate, out AttemptOutcome) (c
 		return false
 	}
 
-	if out.StreamInterrupted && out.HasEmittedUserBytes {
+	if out.StreamInterrupted {
 		RecordStreamInterrupted(c.Metrics)
-		// no state open required solely by interrupt; temporary error ema rises
-		return false
 	}
-
+	if out.Event != "" {
+		applyTransitionLocked(c.Metrics, out.Event, out.RetryAfterSec)
+	}
 	if out.HasEmittedUserBytes {
-		// post first-byte non-interrupt failure: still cannot transparent replay
-		if out.Event != "" {
-			applyTransitionLocked(c.Metrics, out.Event, out.RetryAfterSec)
-		}
+		// post-first-byte failure, including interruption, cannot be replayed.
 		return false
 	}
 
 	// pre-first-byte failure → update state then transparent retry next
-	if out.Event != "" {
-		applyTransitionLocked(c.Metrics, out.Event, out.RetryAfterSec)
-	}
 	return true
 }
 
@@ -116,7 +120,7 @@ func RunTransparentRetry(
 ) (successIdx int, last AttemptOutcome, exhausted bool) {
 	successIdx = -1
 	for i, c := range plan.Candidates {
-		out := tryFn(c, i)
+		out := normalizeAttemptOutcome(tryFn(c, i))
 		retry := ApplyAttemptOutcome(&plan.Candidates[i], out)
 		last = out
 		if out.Success {

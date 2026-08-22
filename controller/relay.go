@@ -269,7 +269,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 			if newAPIError == nil {
 				relayInfo.LastError = nil
-				notifyModelRouteProduction(c, channel, relayInfo, true, 0, false)
+				notifyModelRouteProduction(c, channel, relayInfo, true, http.StatusOK, false)
 				// release concurrency after success (stream already finished when helper returns)
 				service.ReleaseModelRouteProductionSlot(c)
 				return
@@ -753,10 +753,25 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	return true
 }
 
+func relayProductionCompletedNormally(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil {
+		return false
+	}
+	if relayInfo.StreamStatus == nil {
+		return !relayInfo.IsStream
+	}
+	return relayInfo.StreamStatus.IsNormalEnd() && relayInfo.StreamStatus.EndError == nil && !relayInfo.StreamStatus.HasErrors()
+}
+
 // notifyModelRouteProduction feeds production outcomes into modelroute when model_priority is enabled.
 func notifyModelRouteProduction(c *gin.Context, channel *model.Channel, relayInfo *relaycommon.RelayInfo, success bool, statusCode int, streamInterrupted bool) {
 	if channel == nil || relayInfo == nil || !modelroute.IsModelPriorityMode() {
 		return
+	}
+	// HTTP 200 plus a normal relay/stream completion is the only success.
+	completedNormally := success && statusCode == http.StatusOK && relayProductionCompletedNormally(relayInfo)
+	if relayInfo.StreamStatus != nil && !completedNormally && relayInfo.HasSendResponse() {
+		streamInterrupted = true
 	}
 	// ensure billed shadow executor is wired (idempotent)
 	EnsureBilledShadowExecutor()
@@ -768,21 +783,21 @@ func notifyModelRouteProduction(c *gin.Context, channel *model.Channel, relayInf
 		mapping = channel.GetModelMapping()
 	}
 	var ttft time.Duration
-	if success && relayInfo.HasSendResponse() {
+	if completedNormally && relayInfo.HasSendResponse() {
 		ttft = relayInfo.FirstResponseTime.Sub(relayInfo.StartTime)
 		if ttft < 0 {
 			ttft = 0
 		}
 	}
 	var shadow *modelroute.ProductionShadowCapture
-	if success && relayInfo.Request != nil {
+	if completedNormally && relayInfo.Request != nil {
 		shadow = BuildProductionShadowCaptureFromRelay(c, relayInfo, relayInfo.Request)
 	}
 	modelroute.ApplyProductionOutcomeAsync(modelroute.ProductionOutcome{
 		ChannelID:         int64(channel.Id),
 		RequestedModel:    relayInfo.OriginModelName,
 		MappingJSON:       mapping,
-		Success:           success,
+		Success:           completedNormally,
 		StatusCode:        statusCode,
 		StreamInterrupted: streamInterrupted,
 		TTFT:              ttft,

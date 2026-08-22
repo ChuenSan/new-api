@@ -1,6 +1,7 @@
 package modelroute
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
@@ -85,7 +86,9 @@ func TestTransparentRetryStopsAfterFirstByte(t *testing.T) {
 	assert.Equal(t, 1, calls)
 	assert.Equal(t, -1, idx)
 	assert.False(t, exhausted)
+	assert.False(t, out.Success)
 	assert.True(t, out.StreamInterrupted)
+	assert.Equal(t, 1, m1.ConsecutiveFailures)
 	require.NotNil(t, m1.StreamInterruptionEMA)
 	assert.Greater(t, *m1.StreamInterruptionEMA, 0.0)
 	// second candidate not tried
@@ -94,12 +97,38 @@ func TestTransparentRetryStopsAfterFirstByte(t *testing.T) {
 
 func TestClassifyAttempt(t *testing.T) {
 	o := ClassifyAttempt(true, 200, false, false)
+	assert.True(t, o.Success)
 	assert.Equal(t, EventProductionSuccess, o.Event)
+
+	o = ClassifyAttempt(true, 204, false, false)
+	assert.False(t, o.Success)
+	assert.Equal(t, EventTemporaryFail, o.Event)
+
+	o = ClassifyAttempt(true, 0, false, false)
+	assert.False(t, o.Success)
+	assert.Equal(t, EventTemporaryFail, o.Event)
+
+	o = ClassifyAttempt(false, 200, false, false)
+	assert.False(t, o.Success)
+	assert.Equal(t, EventTemporaryFail, o.Event)
 
 	o = ClassifyAttempt(false, 429, false, false)
 	assert.Equal(t, EventRateLimited, o.Event)
 
 	o = ClassifyAttempt(false, 500, true, true)
+	assert.False(t, o.Success)
 	assert.True(t, o.StreamInterrupted)
 	assert.Equal(t, EventTemporaryFail, o.Event)
+}
+
+// TestNormalizeAttemptOutcomeCannotBypassFailure guards canonical failure events.
+func TestNormalizeAttemptOutcomeCannotBypassFailure(t *testing.T) {
+	out := normalizeAttemptOutcome(AttemptOutcome{
+		Success:    false,
+		StatusCode: http.StatusInternalServerError,
+		ErrorClass: model.ErrorTemporary,
+		Event:      EventProductionSuccess,
+	})
+	assert.False(t, out.Success)
+	assert.Equal(t, EventTemporaryFail, out.Event)
 }
