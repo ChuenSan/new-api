@@ -3967,6 +3967,7 @@
     "Run tests for the selected models": "選択したモデルのテストを実行",
     "running": "実行中",
     "Running": "実行中",
+    "Runs automatically after saving": "保存後に自動的に実行されます",
     "Runtime": "実行環境",
     "Runtime learning reset": "Runtime learning reset",
     "Runway": "残り期間",

@@ -3967,6 +3967,7 @@
     "Run tests for the selected models": "執行所選模型的測試",
     "running": "執行中",
     "Running": "執行中",
+    "Runs automatically after saving": "儲存後自動執行",
     "Runtime": "執行環境",
     "Runtime learning reset": "Runtime learning reset",
     "Runway": "可用時長",

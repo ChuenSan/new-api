@@ -3967,6 +3967,7 @@
     "Run tests for the selected models": "Chạy kiểm thử cho các mô hình đã chọn",
     "running": "đang chạy",
     "Running": "Đang chạy",
+    "Runs automatically after saving": "Tự động chạy sau khi lưu",
     "Runtime": "Môi trường chạy",
     "Runtime learning reset": "Runtime learning reset",
     "Runway": "Thời gian còn lại",

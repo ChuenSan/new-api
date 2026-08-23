@@ -3967,6 +3967,7 @@
     "Run tests for the selected models": "Запустить тесты для выбранных моделей",
     "running": "выполняется",
     "Running": "Выполняется",
+    "Runs automatically after saving": "Автоматически выполняется после сохранения",
     "Runtime": "Среда выполнения",
     "Runtime learning reset": "Runtime learning reset",
     "Runway": "Запас",

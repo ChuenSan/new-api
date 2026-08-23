@@ -3967,6 +3967,7 @@
     "Run tests for the selected models": "运行所选模型的测试",
     "running": "运行中",
     "Running": "运行中",
+    "Runs automatically after saving": "保存后自动执行",
     "Runtime": "运行环境",
     "Runtime learning reset": "短期学习指标已重置",
     "Runway": "可用时长",

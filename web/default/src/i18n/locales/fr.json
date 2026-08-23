@@ -3967,6 +3967,7 @@
     "Run tests for the selected models": "Exécuter les tests pour les modèles sélectionnés",
     "running": "en cours",
     "Running": "En cours",
+    "Runs automatically after saving": "S'exécute automatiquement après l'enregistrement",
     "Runtime": "Environnement",
     "Runtime learning reset": "Runtime learning reset",
     "Runway": "Durée restante",

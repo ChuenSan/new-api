@@ -109,6 +109,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { migrateToModelPriority } from '@/features/model-route/api'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -598,6 +599,8 @@ export function ChannelMutateDrawer({
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
   const canRevealChannelKey = currentUser?.role === ROLE.SUPER_ADMIN
+  const canMigrateModelPriority = currentUser?.role === ROLE.SUPER_ADMIN
+  const [migrateOnSave, setMigrateOnSave] = useState(true)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
@@ -680,6 +683,7 @@ export function ChannelMutateDrawer({
     if (!open) {
       setChannelKey(null)
       setIsChannelKeyLoading(false)
+      setMigrateOnSave(true)
     } else if (channelId) {
       setChannelKey(null)
     }
@@ -1507,6 +1511,22 @@ export function ChannelMutateDrawer({
     setOpen(null)
   }, [channelId, queryClient, onOpenChange, setOpen])
 
+  // Fire-and-forget model priority migration after channel save
+  const migrateModelPriorityAfterSave = useCallback(async () => {
+    try {
+      const res = await migrateToModelPriority()
+      if (!res.success) {
+        toast.error(res.message || t('Migration failed'))
+        return
+      }
+      toast.success(t('Migrated to model priority'))
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Migration failed')
+      )
+    }
+  }, [t])
+
   // Show missing models confirmation dialog
   const confirmMissingModelMappings = useCallback(
     (missingModels: string[]): Promise<MissingModelsAction> => {
@@ -1668,6 +1688,10 @@ export function ChannelMutateDrawer({
       }
 
       await channelMutation.mutateAsync(data)
+
+      if (migrateOnSave && canMigrateModelPriority) {
+        void migrateModelPriorityAfterSave()
+      }
     },
     [
       isEditing,
@@ -1676,6 +1700,9 @@ export function ChannelMutateDrawer({
       confirmMissingModelMappings,
       confirmStatusCodeRisk,
       channelMutation,
+      migrateOnSave,
+      canMigrateModelPriority,
+      migrateModelPriorityAfterSave,
       t,
     ]
   )
@@ -4579,6 +4606,23 @@ export function ChannelMutateDrawer({
           </Form>
 
           <SheetFooter className={sideDrawerFooterClassName()}>
+            {canMigrateModelPriority && (
+              <label className='col-span-2 flex cursor-pointer items-center justify-between gap-3 sm:mr-auto sm:max-w-72'>
+                <span className='flex min-w-0 flex-col gap-0.5'>
+                  <span className='text-sm font-medium'>
+                    {t('Migrate to model priority')}
+                  </span>
+                  <span className='text-muted-foreground text-xs'>
+                    {t('Runs automatically after saving')}
+                  </span>
+                </span>
+                <Switch
+                  checked={migrateOnSave}
+                  onCheckedChange={setMigrateOnSave}
+                  disabled={isSubmitting}
+                />
+              </label>
+            )}
             <SheetClose
               render={<Button variant='outline' disabled={isSubmitting} />}
             >
