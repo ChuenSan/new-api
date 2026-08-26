@@ -10,7 +10,7 @@ on:
         description: Git ref to build
         required: false
         type: string
-        default: ''
+        default: fix/optimize-log-display
   push:
     tags:
       - '*'
