@@ -1,0 +1,117 @@
+name: Build custom Linux ARM64 glibc binary
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        type: string
+        default: ''
+  push:
+    tags:
+      - '*'
+      - '!*-alpha*'
+
+jobs:
+  build:
+    name: Linux ARM64 glibc single binary
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Determine version
+        run: |
+          VERSION=$(git describe --tags --always)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Build frontend (default)
+        env:
+          CI: ''
+        run: |
+          cd web
+          bun install --frozen-lockfile
+          cd default
+          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$VERSION" bun run build
+
+      - name: Build frontend (classic)
+        env:
+          CI: ''
+        run: |
+          cd web
+          bun install --filter ./classic --frozen-lockfile
+          cd classic
+          VITE_REACT_APP_VERSION="$VERSION" bun run build
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '>=1.25.1'
+
+      - name: Install ARM64 glibc toolchain
+        run: |
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            file
+
+      - name: Build Linux ARM64 binary
+        env:
+          CGO_ENABLED: '1'
+          GOOS: linux
+          GOARCH: arm64
+          CC: aarch64-linux-gnu-gcc
+        run: |
+          go mod download
+          LDFLAGS="-s -w -linkmode=external -extldflags=-Wl,--dynamic-linker=/lib/ld-linux-aarch64.so.1 -X github.com/QuantumNous/new-api/common.Version=$VERSION"
+          go build -trimpath -ldflags "$LDFLAGS" -o new-api-linux-arm64-custom .
+
+      - name: Verify ELF target
+        run: |
+          BINARY=new-api-linux-arm64-custom
+          file "$BINARY"
+          readelf -h "$BINARY" | grep -Eq 'Class:[[:space:]]+ELF64'
+          readelf -h "$BINARY" | grep -Eq 'Machine:[[:space:]]+AArch64'
+          readelf -l "$BINARY" | grep -Fq '[Requesting program interpreter: /lib/ld-linux-aarch64.so.1]'
+          readelf -d "$BINARY" | grep -Eq 'NEEDED.*libc\.so\.6'
+          if file "$BINARY" | grep -qi 'statically linked'; then
+            echo 'The binary must be dynamically linked.' >&2
+            exit 1
+          fi
+
+      - name: Generate checksum
+        run: |
+          sha256sum new-api-linux-arm64-custom > new-api-linux-arm64-custom.sha256
+          sha256sum -c new-api-linux-arm64-custom.sha256
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: new-api-linux-arm64-custom
+          path: |
+            new-api-linux-arm64-custom
+            new-api-linux-arm64-custom.sha256
+          if-no-files-found: error
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          files: |
+            new-api-linux-arm64-custom
+            new-api-linux-arm64-custom.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
