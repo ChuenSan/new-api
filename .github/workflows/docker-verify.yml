@@ -4,6 +4,17 @@ on:
   push:
     branches: [feat/model-route-shadow-probe, pre/messages-to-chat-convert, fix/optimize-log-display]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit to build
+        required: true
+        default: fix/optimize-log-display
+        type: string
+      tag:
+        description: GHCR image tag
+        required: true
+        default: arm64-verify
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -17,6 +28,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+
+      - name: Resolve revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Lowercase owner
         run: echo "LOWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
@@ -31,15 +49,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push (amd64)
+      - name: Build & push (ARM64)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64
+          platforms: linux/arm64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.LOWNER }}/new-api:mr-verify
-            ${{ env.REGISTRY }}/${{ env.LOWNER }}/new-api:sha-${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.LOWNER }}/new-api:${{ inputs.tag || 'arm64-verify' }}
+            ${{ env.REGISTRY }}/${{ env.LOWNER }}/new-api:sha-${{ steps.revision.outputs.sha }}-arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Verify ARM64 image and binary
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.LOWNER }}/new-api:${{ inputs.tag || 'arm64-verify' }}
+        run: |
+          docker buildx imagetools inspect --raw "$IMAGE" \
+            | jq -e '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")' >/dev/null
+          docker pull --platform linux/arm64 "$IMAGE"
+          CONTAINER=$(docker create --platform linux/arm64 "$IMAGE")
+          trap 'docker rm "$CONTAINER" >/dev/null' EXIT
+          docker cp "$CONTAINER:/new-api" /tmp/new-api
+          file /tmp/new-api
+          readelf -h /tmp/new-api | grep -Eq 'Class:[[:space:]]+ELF64'
+          readelf -h /tmp/new-api | grep -Eq 'Machine:[[:space:]]+AArch64'
