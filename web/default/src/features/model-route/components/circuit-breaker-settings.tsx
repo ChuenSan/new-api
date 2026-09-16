@@ -40,8 +40,17 @@ const DEFAULT_THRESHOLD = 3
 const MIN_THRESHOLD = 3
 const MAX_THRESHOLD = 999
 
+const RETRY_DELAY_MIN_KEY = 'model_route_setting.retry_delay_min' as const
+const RETRY_DELAY_MAX_KEY = 'model_route_setting.retry_delay_max' as const
+const DEFAULT_RETRY_DELAY_MIN = 1
+const DEFAULT_RETRY_DELAY_MAX = 3
+const MIN_RETRY_DELAY = 0
+const MAX_RETRY_DELAY = 60
+
 const defaultSettings = {
   [OPTION_KEY]: DEFAULT_THRESHOLD,
+  [RETRY_DELAY_MIN_KEY]: DEFAULT_RETRY_DELAY_MIN,
+  [RETRY_DELAY_MAX_KEY]: DEFAULT_RETRY_DELAY_MAX,
 }
 
 function useGlobalRateLimitCircuitBreakerThreshold() {
@@ -54,6 +63,135 @@ function useGlobalRateLimitCircuitBreakerThreshold() {
     threshold: settings[OPTION_KEY],
     isLoading: optionsQuery.isLoading,
   }
+}
+
+function useGlobalRetryDelaySettings() {
+  const optionsQuery = useSystemOptions()
+  const settings = useMemo(
+    () => getOptionValue(optionsQuery.data?.data, defaultSettings),
+    [optionsQuery.data?.data]
+  )
+  return {
+    min: settings[RETRY_DELAY_MIN_KEY],
+    max: settings[RETRY_DELAY_MAX_KEY],
+    isLoading: optionsQuery.isLoading,
+  }
+}
+
+export function RetryDelaySettings() {
+  const { t } = useTranslation()
+  const { min: configuredMin, max: configuredMax, isLoading } =
+    useGlobalRetryDelaySettings()
+  const updateOption = useUpdateOption()
+  const [minDelay, setMinDelay] = useState(String(configuredMin))
+  const [maxDelay, setMaxDelay] = useState(String(configuredMax))
+
+  useEffect(() => {
+    setMinDelay(String(configuredMin))
+  }, [configuredMin])
+
+  useEffect(() => {
+    setMaxDelay(String(configuredMax))
+  }, [configuredMax])
+
+  const parsedMin = Number(minDelay.trim())
+  const parsedMax = Number(maxDelay.trim())
+
+  const isValidMin =
+    /^\d+$/.test(minDelay.trim()) &&
+    Number.isInteger(parsedMin) &&
+    parsedMin >= MIN_RETRY_DELAY &&
+    parsedMin <= MAX_RETRY_DELAY
+
+  const isValidMax =
+    /^\d+$/.test(maxDelay.trim()) &&
+    Number.isInteger(parsedMax) &&
+    parsedMax >= MIN_RETRY_DELAY &&
+    parsedMax <= MAX_RETRY_DELAY
+
+  const isValidRange = isValidMin && isValidMax && parsedMax >= parsedMin
+
+  const handleSave = async () => {
+    if (!isValidRange) return
+    try {
+      await updateOption.mutateAsync({
+        key: RETRY_DELAY_MIN_KEY,
+        value: parsedMin,
+      })
+      await updateOption.mutateAsync({
+        key: RETRY_DELAY_MAX_KEY,
+        value: parsedMax,
+      })
+    } catch {
+      // Error handled by mutation toast
+    }
+  }
+
+  return (
+    <div className='flex flex-col gap-3'>
+      <div className='flex flex-col gap-1'>
+        <h2 className='text-sm font-semibold'>{t('Retry backoff delay')}</h2>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Configure random delay range in seconds before retrying failed requests.'
+          )}
+        </p>
+      </div>
+      <div className='flex flex-wrap items-end gap-3'>
+        <div className='flex flex-col gap-1.5'>
+          <label htmlFor='retry-delay-min' className='text-sm font-medium'>
+            {t('Min delay (s)')}
+          </label>
+          <Input
+            id='retry-delay-min'
+            className='h-8 w-24'
+            type='number'
+            min={MIN_RETRY_DELAY}
+            max={MAX_RETRY_DELAY}
+            step='1'
+            value={minDelay}
+            aria-invalid={!isValidMin}
+            onChange={(event) => setMinDelay(event.target.value)}
+          />
+        </div>
+        <div className='flex flex-col gap-1.5'>
+          <label htmlFor='retry-delay-max' className='text-sm font-medium'>
+            {t('Max delay (s)')}
+          </label>
+          <Input
+            id='retry-delay-max'
+            className='h-8 w-24'
+            type='number'
+            min={MIN_RETRY_DELAY}
+            max={MAX_RETRY_DELAY}
+            step='1'
+            value={maxDelay}
+            aria-invalid={!isValidMax}
+            onChange={(event) => setMaxDelay(event.target.value)}
+          />
+        </div>
+        <Button
+          size='sm'
+          className='h-8'
+          disabled={isLoading || updateOption.isPending || !isValidRange}
+          onClick={handleSave}
+        >
+          {t('Save')}
+        </Button>
+      </div>
+      <p className='text-muted-foreground text-xs'>
+        {(() => {
+          if (!isValidMin || !isValidMax) {
+            return t('Enter an integer from 0 to 60')
+          }
+          if (parsedMax < parsedMin) {
+            return t('Max delay must be greater than or equal to min delay')
+          }
+          return t('Allowed range: 0-60s (0 to disable)')
+        })()}
+      </p>
+    </div>
+  )
 }
 
 export function CircuitBreakerSettings() {
@@ -95,51 +233,55 @@ export function CircuitBreakerSettings() {
   }
 
   return (
-    <section className='bg-muted/20 flex flex-col gap-3 rounded-lg border p-4'>
-      <div className='flex flex-col gap-1'>
-        <h2 className='text-sm font-semibold'>
-          {t('Rate-limit circuit breaker')}
-        </h2>
-        <p className='text-muted-foreground text-xs'>
-          {t(
-            'Configure how many consecutive 429 responses open a channel-model route.'
-          )}
-        </p>
-      </div>
-      <div className='flex flex-wrap items-end gap-3'>
-        <div className='flex flex-col gap-1.5'>
-          <label
-            htmlFor='rate-limit-circuit-breaker-threshold'
-            className='text-sm font-medium'
-          >
-            {t('429 failures before opening')}
-          </label>
-          <Input
-            id='rate-limit-circuit-breaker-threshold'
-            className='h-8 w-28'
-            type='number'
-            min={MIN_THRESHOLD}
-            max={MAX_THRESHOLD}
-            step='1'
-            value={threshold}
-            aria-invalid={!isValidThreshold}
-            onChange={(event) => setThreshold(event.target.value)}
-          />
+    <section className='bg-muted/20 grid grid-cols-1 gap-6 rounded-lg border p-4 lg:grid-cols-2'>
+      <div className='flex flex-col gap-3'>
+        <div className='flex flex-col gap-1'>
+          <h2 className='text-sm font-semibold'>
+            {t('Rate-limit circuit breaker')}
+          </h2>
           <p className='text-muted-foreground text-xs'>
-            {isValidThreshold
-              ? t('Allowed range: 3-999')
-              : t('Enter an integer from 3 to 999')}
+            {t(
+              'Configure how many consecutive 429 responses open a channel-model route.'
+            )}
           </p>
         </div>
-        <Button
-          size='sm'
-          className='h-8'
-          disabled={isLoading || updateOption.isPending || !isValidThreshold}
-          onClick={handleSave}
-        >
-          {t('Save')}
-        </Button>
+        <div className='flex flex-wrap items-end gap-3'>
+          <div className='flex flex-col gap-1.5'>
+            <label
+              htmlFor='rate-limit-circuit-breaker-threshold'
+              className='text-sm font-medium'
+            >
+              {t('429 failures before opening')}
+            </label>
+            <Input
+              id='rate-limit-circuit-breaker-threshold'
+              className='h-8 w-28'
+              type='number'
+              min={MIN_THRESHOLD}
+              max={MAX_THRESHOLD}
+              step='1'
+              value={threshold}
+              aria-invalid={!isValidThreshold}
+              onChange={(event) => setThreshold(event.target.value)}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {isValidThreshold
+                ? t('Allowed range: 3-999')
+                : t('Enter an integer from 3 to 999')}
+            </p>
+          </div>
+          <Button
+            size='sm'
+            className='h-8'
+            disabled={isLoading || updateOption.isPending || !isValidThreshold}
+            onClick={handleSave}
+          >
+            {t('Save')}
+          </Button>
+        </div>
       </div>
+
+      <RetryDelaySettings />
     </section>
   )
 }

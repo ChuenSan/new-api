@@ -5235,8 +5235,13 @@
     "Your Turnstile secret key": "あなたのTurnstileシークレットキー",
     "Your Turnstile site key": "あなたのTurnstileサイトキー",
     "Zero retention": "データ保持なし",
-    "Zhipu": "Zhipu",
-    "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Retry backoff delay": "再試行バックオフ遅延",
+    "Configure random delay range in seconds before retrying failed requests.": "失敗したリクエストを再試行する前のランダムな遅延範囲（秒）を設定します。",
+    "Min delay (s)": "最小遅延 (秒)",
+    "Max delay (s)": "最大遅延 (秒)",
+    "Allowed range: 0-60s (0 to disable)": "許可範囲: 0-60秒（0で無効）",
+    "Enter an integer from 0 to 60": "0から60までの整数を入力してください",
+    "Max delay must be greater than or equal to min delay": "最大遅延は最小遅延以上である必要があります"
   }
 }

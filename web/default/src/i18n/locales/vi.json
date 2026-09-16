@@ -5235,8 +5235,13 @@
     "Your Turnstile secret key": "Khóa bí mật Turnstile của bạn",
     "Your Turnstile site key": "Khóa site Turnstile của bạn",
     "Zero retention": "Không lưu dữ liệu",
-    "Zhipu": "Zhipu",
-    "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Retry backoff delay": "Độ trễ thử lại",
+    "Configure random delay range in seconds before retrying failed requests.": "Định cấu hình khoảng thời gian trễ ngẫu nhiên tính bằng giây trước khi thử lại các yêu cầu không thành công.",
+    "Min delay (s)": "Độ trễ tối thiểu (giây)",
+    "Max delay (s)": "Độ trễ tối đa (giây)",
+    "Allowed range: 0-60s (0 to disable)": "Phạm vi cho phép: 0-60s (0 để tắt)",
+    "Enter an integer from 0 to 60": "Nhập một số nguyên từ 0 đến 60",
+    "Max delay must be greater than or equal to min delay": "Độ trễ tối đa phải lớn hơn hoặc bằng độ trễ tối thiểu"
   }
 }

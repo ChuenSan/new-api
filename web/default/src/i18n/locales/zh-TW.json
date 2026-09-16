@@ -5235,8 +5235,13 @@
     "Your Turnstile secret key": "您的 Turnstile 金鑰",
     "Your Turnstile site key": "您的 Turnstile 站點金鑰",
     "Zero retention": "零數據保留",
-    "Zhipu": "智譜",
-    "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Retry backoff delay": "重試退避延遲",
+    "Configure random delay range in seconds before retrying failed requests.": "配置重試失敗請求前的隨機延遲範圍（秒）。",
+    "Min delay (s)": "最小延遲 (秒)",
+    "Max delay (s)": "最大延遲 (秒)",
+    "Allowed range: 0-60s (0 to disable)": "允許範圍: 0-60 秒（0為關閉）",
+    "Enter an integer from 0 to 60": "請輸入 0 到 60 之間的整數",
+    "Max delay must be greater than or equal to min delay": "最大延遲必須大於或等於最小延遲"
   }
 }

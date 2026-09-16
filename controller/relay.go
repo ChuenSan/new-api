@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -291,6 +292,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 				break
 			}
+			if !waitRandomRetryDelay(c) {
+				break
+			}
 		}
 
 		if !shouldStartAvailabilityRound(availabilityMode, availabilityRetry, relayInfo.HasSendResponse(), requestIsActive(c)) {
@@ -350,6 +354,37 @@ func waitForAvailabilityRetry(c *gin.Context) bool {
 		return false
 	}
 	timer := time.NewTimer(availabilityNoChannelRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-c.Request.Context().Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func getRandomRetryDelay() time.Duration {
+	minSec, maxSec := operation_setting.GetRetryDelayRange()
+	if maxSec <= 0 {
+		return 0
+	}
+	if maxSec <= minSec {
+		return time.Duration(minSec) * time.Second
+	}
+	minMs := minSec * 1000
+	maxMs := maxSec * 1000
+	return time.Duration(minMs+rand.Intn(maxMs-minMs+1)) * time.Millisecond
+}
+
+func waitRandomRetryDelay(c *gin.Context) bool {
+	if !requestIsActive(c) {
+		return false
+	}
+	delay := getRandomRetryDelay()
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-c.Request.Context().Done():
@@ -659,6 +694,9 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+			break
+		}
+		if !waitRandomRetryDelay(c) {
 			break
 		}
 	}

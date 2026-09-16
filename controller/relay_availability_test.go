@@ -107,3 +107,29 @@ func TestAvailabilityRoundHardStops(t *testing.T) {
 		})
 	}
 }
+
+func TestGetRandomRetryDelayRange(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		d := getRandomRetryDelay()
+		if d < 1000*time.Millisecond || d > 3000*time.Millisecond {
+			t.Fatalf("getRandomRetryDelay() = %v, expected in range [1000ms, 3000ms]", d)
+		}
+	}
+}
+
+func TestWaitRandomRetryDelayCancellation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil).WithContext(ctx)
+	cancel()
+
+	started := time.Now()
+	if waitRandomRetryDelay(c) {
+		t.Fatal("expected canceled request not to wait full delay and return false")
+	}
+	if elapsed := time.Since(started); elapsed >= 1000*time.Millisecond {
+		t.Fatalf("expected immediate return on canceled request, took %v", elapsed)
+	}
+}
+
