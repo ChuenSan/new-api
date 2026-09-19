@@ -26,6 +26,7 @@ import type {
   ReorderModelRoutePoliciesRequest,
   ResetLearningRequest,
   UpdateRateLimitCircuitBreakerThresholdRequest,
+  UpdatePreflightRateLimitRequest,
   UpdatePolicyPriorityRequest,
 } from './types'
 
@@ -70,6 +71,22 @@ export async function updateRateLimitCircuitBreakerThreshold(
   }
 }> {
   const res = await api.put('/api/model_route/metrics/threshold', data)
+  return res.data
+}
+
+export async function updatePreflightRateLimit(
+  data: UpdatePreflightRateLimitRequest
+): Promise<{
+  success: boolean
+  message: string
+  data?: {
+    channel_id: number
+    effective_model: string
+    window_seconds: number | null
+    max_requests: number | null
+  }
+}> {
+  const res = await api.put('/api/model_route/metrics/rate_limit', data)
   return res.data
 }
 

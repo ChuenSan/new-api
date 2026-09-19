@@ -55,6 +55,8 @@ import {
 } from './api'
 import {
   CircuitBreakerSettings,
+  GlobalRateLimitSettings,
+  PreflightRateLimitEditor,
   RateLimitThresholdEditor,
 } from './components/circuit-breaker-settings'
 import { PolicySortableGroup } from './components/policy-sortable-group'
@@ -886,7 +888,10 @@ export function ModelRouteAdmin() {
         </div>
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
-        <CircuitBreakerSettings />
+        <div className='flex flex-wrap gap-4'>
+          <CircuitBreakerSettings />
+          <GlobalRateLimitSettings />
+        </div>
         <Tabs
           value={tab}
           onValueChange={(v) => setTab(v as 'policies' | 'metrics')}
@@ -1102,6 +1107,9 @@ export function ModelRouteAdmin() {
                       {t('429 threshold override')}
                     </th>
                     <th className='text-muted-foreground p-2.5 font-medium'>
+                      {t('Rate limit override')}
+                    </th>
+                    <th className='text-muted-foreground p-2.5 font-medium'>
                       {t('Actions')}
                     </th>
                   </tr>
@@ -1187,6 +1195,9 @@ export function ModelRouteAdmin() {
                         </td>
                         <td className='p-2.5'>
                           <RateLimitThresholdEditor row={row} />
+                        </td>
+                        <td className='p-2.5'>
+                          <PreflightRateLimitEditor row={row} />
                         </td>
                         <td className='p-2.5'>
                           <div className='flex flex-wrap items-center gap-1.5'>

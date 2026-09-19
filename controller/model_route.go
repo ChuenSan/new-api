@@ -320,6 +320,8 @@ func ListModelRouteMetrics(c *gin.Context) {
 		ChannelExists                    bool     `json:"channel_exists"`
 		RequestedModels                  []string `json:"requested_models"`
 		RateLimitCircuitBreakerEffective int      `json:"rate_limit_circuit_breaker_effective_threshold"`
+		RateLimitEffectiveWindow         int      `json:"rate_limit_effective_window"`
+		RateLimitEffectiveMax            int      `json:"rate_limit_effective_max"`
 	}
 	out := make([]rowView, 0, len(rows))
 	for i := range rows {
@@ -329,6 +331,7 @@ func ListModelRouteMetrics(c *gin.Context) {
 		if requested == nil {
 			requested = []string{}
 		}
+		effWindow, effMax := modelroute.GetPreflightRateLimit(&rows[i])
 		out = append(out, rowView{
 			ChannelModelMetrics:              rows[i],
 			Role:                             string(modelroute.GlobalRoles.Get(mk)),
@@ -339,6 +342,8 @@ func ListModelRouteMetrics(c *gin.Context) {
 			ChannelExists:                    info.Exists,
 			RequestedModels:                  requested,
 			RateLimitCircuitBreakerEffective: modelroute.GetRateLimitCircuitBreakerThreshold(&rows[i]),
+			RateLimitEffectiveWindow:         effWindow,
+			RateLimitEffectiveMax:            effMax,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": out})
@@ -405,6 +410,51 @@ func UpdateModelRouteMetricsThreshold(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
 		"channel_id": req.ChannelID, "effective_model": req.EffectiveModel,
 		"threshold": threshold,
+	}})
+}
+
+type updateMetricsRateLimitRequest struct {
+	ChannelID      int64  `json:"channel_id"`
+	EffectiveModel string `json:"effective_model"`
+	WindowSeconds  *int   `json:"window_seconds"`
+	MaxRequests    *int   `json:"max_requests"`
+}
+
+// UpdateModelRouteMetricsRateLimit PUT /api/model_route/metrics/rate_limit.
+func UpdateModelRouteMetricsRateLimit(c *gin.Context) {
+	var req updateMetricsRateLimitRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid body"})
+		return
+	}
+	req.EffectiveModel = strings.TrimSpace(req.EffectiveModel)
+	if req.ChannelID <= 0 || req.EffectiveModel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "channel_id and effective_model required"})
+		return
+	}
+	// nil or 0 means clear override
+	if req.WindowSeconds != nil && *req.WindowSeconds == 0 {
+		req.WindowSeconds = nil
+	}
+	if req.MaxRequests != nil && *req.MaxRequests == 0 {
+		req.MaxRequests = nil
+	}
+	if _, err := modelroute.UpdatePreflightRateLimit(
+		req.ChannelID,
+		req.EffectiveModel,
+		req.WindowSeconds,
+		req.MaxRequests,
+	); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "model_route.metrics_rate_limit", map[string]interface{}{
+		"channel_id": req.ChannelID, "effective_model": req.EffectiveModel,
+		"window_seconds": req.WindowSeconds, "max_requests": req.MaxRequests,
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
+		"channel_id": req.ChannelID, "effective_model": req.EffectiveModel,
+		"window_seconds": req.WindowSeconds, "max_requests": req.MaxRequests,
 	}})
 }
 

@@ -178,3 +178,28 @@ export function patchMetricsRateLimitThreshold(
   })
   return changed ? { ...response, data } : response
 }
+
+export function patchMetricsPreflightRateLimit(
+  response: ModelRouteMetricsResponse | undefined,
+  target: Pick<ModelRouteMetrics, 'channel_id' | 'effective_model'>,
+  windowSeconds: number | null,
+  maxRequests: number | null
+) {
+  if (!response) return response
+  let changed = false
+  const data = response.data.map((row) => {
+    if (
+      row.channel_id !== target.channel_id ||
+      row.effective_model !== target.effective_model
+    ) {
+      return row
+    }
+    changed = true
+    return {
+      ...row,
+      rate_limit_window_seconds: windowSeconds,
+      rate_limit_max_requests: maxRequests,
+    }
+  })
+  return changed ? { ...response, data } : response
+}

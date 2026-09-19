@@ -243,6 +243,23 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 
 			addUsedChannel(c, channel.Id)
+
+			if modelroute.GlobalPreflightRateLimiter != nil {
+				effectiveModel := relayInfo.OriginModelName
+				if eff, _, err := modelroute.ResolveEffectiveModel(relayInfo.OriginModelName, channel.GetModelMapping()); err == nil && eff != "" {
+					effectiveModel = eff
+				}
+				if err := modelroute.GlobalPreflightRateLimiter.Acquire(
+					c.Request.Context(),
+					int64(channel.Id),
+					effectiveModel,
+				); err != nil {
+					newAPIError = types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusGatewayTimeout, types.ErrOptionWithSkipRetry())
+					service.ReleaseModelRouteProductionSlot(c)
+					break
+				}
+			}
+
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
 				// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -635,6 +652,22 @@ func RelayTask(c *gin.Context) {
 		}
 
 		addUsedChannel(c, channel.Id)
+
+		if modelroute.GlobalPreflightRateLimiter != nil {
+			effectiveModel := relayInfo.OriginModelName
+			if eff, _, err := modelroute.ResolveEffectiveModel(relayInfo.OriginModelName, channel.GetModelMapping()); err == nil && eff != "" {
+				effectiveModel = eff
+			}
+			if err := modelroute.GlobalPreflightRateLimiter.Acquire(
+				c.Request.Context(),
+				int64(channel.Id),
+				effectiveModel,
+			); err != nil {
+				taskErr = service.TaskErrorWrapperLocal(err, "rate_limit_wait_failed", http.StatusGatewayTimeout)
+				break
+			}
+		}
+
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {

@@ -41,6 +41,10 @@ export type ModelRouteMetrics = {
   requested_models?: string[]
   rate_limit_circuit_breaker_threshold?: number | null
   rate_limit_circuit_breaker_effective_threshold?: number
+  rate_limit_window_seconds?: number | null
+  rate_limit_max_requests?: number | null
+  rate_limit_effective_window?: number
+  rate_limit_effective_max?: number
   route_state: string
   role?: string
   is_stale?: boolean
@@ -110,6 +114,13 @@ export type UpdateRateLimitCircuitBreakerThresholdRequest = {
   channel_id: number
   effective_model: string
   threshold: number | null
+}
+
+export type UpdatePreflightRateLimitRequest = {
+  channel_id: number
+  effective_model: string
+  window_seconds: number | null
+  max_requests: number | null
 }
 
 export type ModelRouteMetricsResponse = {

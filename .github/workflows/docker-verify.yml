@@ -2,13 +2,13 @@ name: Docker build & publish (verify)
 
 on:
   push:
-    branches: [feat/model-route-shadow-probe, pre/messages-to-chat-convert, fix/optimize-log-display]
+    branches: [feat/model-route-shadow-probe, pre/messages-to-chat-convert, fix/optimize-log-display, feat/retry-concurrency-settings]
   workflow_dispatch:
     inputs:
       ref:
         description: Git ref or commit to build
         required: true
-        default: fix/optimize-log-display
+        default: feat/retry-concurrency-settings
         type: string
       tag:
         description: GHCR image tag

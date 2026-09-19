@@ -148,6 +148,16 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorMsg(c, err.Error())
 			return
 		}
+	case "model_route_setting.rate_limit_window_seconds":
+		if _, err := operation_setting.ValidateRateLimitWindowSeconds(option.Value.(string)); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
+	case "model_route_setting.rate_limit_max_requests":
+		if _, err := operation_setting.ValidateRateLimitMaxRequests(option.Value.(string)); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
 			common.ApiErrorMsg(c, "合规确认字段不允许通过通用设置接口修改")

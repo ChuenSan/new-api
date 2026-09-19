@@ -23,6 +23,8 @@ type ChannelModelMetrics struct {
 
 	// A nil value inherits the process-wide model route setting.
 	RateLimitCircuitBreakerThreshold *int `json:"rate_limit_circuit_breaker_threshold" gorm:"column:rate_limit_circuit_breaker_threshold"`
+	RateLimitWindowSeconds           *int `json:"rate_limit_window_seconds" gorm:"column:rate_limit_window_seconds"`
+	RateLimitMaxRequests             *int `json:"rate_limit_max_requests" gorm:"column:rate_limit_max_requests"`
 
 	ProductionSampleCount int64 `json:"production_sample_count" gorm:"not null;default:0"`
 	ShadowSampleCount     int64 `json:"shadow_sample_count" gorm:"not null;default:0"`
@@ -201,6 +203,36 @@ func UpdateChannelModelMetricsRateLimitThreshold(
 		return nil, err
 	}
 	result.RateLimitCircuitBreakerThreshold = threshold
+	result.UpdatedAt = updatedAt
+	return &result, nil
+}
+
+func UpdateChannelModelMetricsRateLimit(
+	channelID int64,
+	effectiveModel string,
+	windowSeconds *int,
+	maxRequests *int,
+) (*ChannelModelMetrics, error) {
+	var result ChannelModelMetrics
+	updatedAt := common.GetTimestamp()
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("channel_id = ? AND effective_model = ?", channelID, effectiveModel).
+			First(&result).Error; err != nil {
+			return err
+		}
+		return tx.Model(&ChannelModelMetrics{}).
+			Where("channel_id = ? AND effective_model = ?", channelID, effectiveModel).
+			Updates(map[string]interface{}{
+				"rate_limit_window_seconds": windowSeconds,
+				"rate_limit_max_requests":   maxRequests,
+				"updated_at":                updatedAt,
+			}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.RateLimitWindowSeconds = windowSeconds
+	result.RateLimitMaxRequests = maxRequests
 	result.UpdatedAt = updatedAt
 	return &result, nil
 }

@@ -67,6 +67,7 @@ func main() {
 	controller.EnsureBilledShadowExecutor()
 	modelroute.WireShadowExecutor = controller.EnsureBilledShadowExecutor
 	modelroute.GlobalCalibrationPersister.StartPeriodicSnapshot(0)
+	modelroute.InitPreflightRateLimiter()
 	if err := modelroute.ReconcileProbeQueueFromDB(); err != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf("model route probe queue startup reconciliation failed: %v", err))
 	}
