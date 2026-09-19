@@ -30,10 +30,10 @@ func TestValidateRateLimitCircuitBreakerThreshold(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "minimum", value: "3", want: 3},
-		{name: "maximum", value: "999", want: 999},
+		{name: "maximum", value: "2147483647", want: 2147483647},
 		{name: "trimmed", value: " 42 ", want: 42},
 		{name: "below minimum", value: "2", wantErr: true},
-		{name: "above maximum", value: "1000", wantErr: true},
+		{name: "above maximum", value: "2147483648", wantErr: true},
 		{name: "fraction", value: "3.5", wantErr: true},
 		{name: "empty", value: "", wantErr: true},
 	}

@@ -11,7 +11,7 @@ import (
 const (
 	DefaultRateLimitCircuitBreakerThreshold = 3
 	MinRateLimitCircuitBreakerThreshold     = 3
-	MaxRateLimitCircuitBreakerThreshold     = 999
+	MaxRateLimitCircuitBreakerThreshold     = 2147483647
 
 	DefaultRetryDelayMin = 1
 	DefaultRetryDelayMax = 3

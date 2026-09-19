@@ -302,7 +302,7 @@ func TestUpdateModelRouteMetricsThresholdRejectsInvalidRequests(t *testing.T) {
 		ChannelID: 62, EffectiveModel: "effective", RouteState: string(model.RouteHealthy),
 	}))
 
-	validThresholds := []int{3, 999}
+	validThresholds := []int{3, 2147483647}
 	for _, threshold := range validThresholds {
 		recorder, response := performMetricsThreshold(t, map[string]interface{}{
 			"channel_id": 62, "effective_model": "effective", "threshold": threshold,
@@ -313,7 +313,7 @@ func TestUpdateModelRouteMetricsThresholdRejectsInvalidRequests(t *testing.T) {
 
 	invalidBodies := []map[string]interface{}{
 		{"channel_id": 62, "effective_model": "effective", "threshold": 2},
-		{"channel_id": 62, "effective_model": "effective", "threshold": 1000},
+		{"channel_id": 62, "effective_model": "effective", "threshold": 2147483648},
 		{"channel_id": 62, "effective_model": "effective", "threshold": "3"},
 		{"channel_id": 62, "effective_model": "effective"},
 	}

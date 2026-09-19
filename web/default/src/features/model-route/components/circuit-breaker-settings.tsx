@@ -38,7 +38,7 @@ const OPTION_KEY =
   'model_route_setting.rate_limit_circuit_breaker_threshold' as const
 const DEFAULT_THRESHOLD = 3
 const MIN_THRESHOLD = 3
-const MAX_THRESHOLD = 999
+const MAX_THRESHOLD = 2147483647
 
 const RETRY_DELAY_MIN_KEY = 'model_route_setting.retry_delay_min' as const
 const RETRY_DELAY_MAX_KEY = 'model_route_setting.retry_delay_max' as const
@@ -255,7 +255,7 @@ export function CircuitBreakerSettings() {
             </label>
             <Input
               id='rate-limit-circuit-breaker-threshold'
-              className='h-8 w-28'
+              className='h-8 w-32'
               type='number'
               min={MIN_THRESHOLD}
               max={MAX_THRESHOLD}
@@ -266,8 +266,8 @@ export function CircuitBreakerSettings() {
             />
             <p className='text-muted-foreground text-xs'>
               {isValidThreshold
-                ? t('Allowed range: 3-999')
-                : t('Enter an integer from 3 to 999')}
+                ? t('Allowed range: 3-2147483647')
+                : t('Enter an integer from 3 to 2147483647')}
             </p>
           </div>
           <Button
@@ -343,7 +343,7 @@ export function RateLimitThresholdEditor({ row }: { row: ModelRouteMetrics }) {
   }
 
   return (
-    <div className='flex min-w-[170px] flex-col gap-1.5'>
+    <div className='flex min-w-[200px] flex-col gap-1.5'>
       <div className='flex items-center gap-1.5'>
         <span className='text-xs font-medium'>
           {t('429 threshold override')}
@@ -354,7 +354,7 @@ export function RateLimitThresholdEditor({ row }: { row: ModelRouteMetrics }) {
       </div>
       <div className='flex items-center gap-1.5'>
         <Input
-          className='h-8 w-20'
+          className='h-8 w-28'
           type='number'
           min={MIN_THRESHOLD}
           max={MAX_THRESHOLD}
@@ -398,7 +398,7 @@ export function RateLimitThresholdEditor({ row }: { row: ModelRouteMetrics }) {
       </span>
       {!isValid && (
         <span className='text-destructive text-[10px]'>
-          {t('Enter an integer from 3 to 999')}
+          {t('Enter an integer from 3 to 2147483647')}
         </span>
       )}
     </div>

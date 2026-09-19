@@ -9,27 +9,32 @@ function stableStringify(obj) {
 
 const newKeys = {
   en: {
-    'Runs automatically after saving': 'Runs automatically after saving',
+    'Allowed range: 3-2147483647': 'Allowed range: 3-2147483647',
+    'Enter an integer from 3 to 2147483647': 'Enter an integer from 3 to 2147483647',
   },
   zh: {
-    'Runs automatically after saving': '保存后自动执行',
+    'Allowed range: 3-2147483647': '允许范围：3-2147483647',
+    'Enter an integer from 3 to 2147483647': '请输入 3 到 2147483647 之间的整数',
   },
   fr: {
-    'Runs automatically after saving':
-      "S'exécute automatiquement après l'enregistrement",
+    'Allowed range: 3-2147483647': 'Plage autorisée : 3-2147483647',
+    'Enter an integer from 3 to 2147483647': 'Entrez un entier de 3 à 2147483647',
   },
   ja: {
-    'Runs automatically after saving': '保存後に自動的に実行されます',
+    'Allowed range: 3-2147483647': '許可範囲: 3-2147483647',
+    'Enter an integer from 3 to 2147483647': '3〜2147483647 の整数を入力してください',
   },
   ru: {
-    'Runs automatically after saving':
-      'Автоматически выполняется после сохранения',
+    'Allowed range: 3-2147483647': 'Допустимый диапазон: 3–2147483647',
+    'Enter an integer from 3 to 2147483647': 'Введите целое число от 3 до 2147483647',
   },
   vi: {
-    'Runs automatically after saving': 'Tự động chạy sau khi lưu',
+    'Allowed range: 3-2147483647': 'Phạm vi cho phép: 3-2147483647',
+    'Enter an integer from 3 to 2147483647': 'Nhập số nguyên từ 3 đến 2147483647',
   },
   'zh-TW': {
-    'Runs automatically after saving': '儲存後自動執行',
+    'Allowed range: 3-2147483647': '允許範圍：3-2147483647',
+    'Enter an integer from 3 to 2147483647': '請輸入 3 到 2147483647 之間的整數',
   },
 }
 
