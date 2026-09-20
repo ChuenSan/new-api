@@ -16,7 +16,9 @@ const newKeys = {
     "Rate limit override": "Rate limit override",
     "Inherit global: {{window}}s / {{count}} req": "Inherit global: {{window}}s / {{count}} req",
     "Inherit global: Unlimited": "Inherit global: Unlimited",
-    "req": "req"
+    "req": "req",
+    'Allowed range: 3-2147483647': 'Allowed range: 3-2147483647',
+    'Enter an integer from 3 to 2147483647': 'Enter an integer from 3 to 2147483647',
   },
   zh: {
     "Global rate limit": "全局频次限制",
@@ -26,7 +28,9 @@ const newKeys = {
     "Rate limit override": "频次限制单独覆盖",
     "Inherit global: {{window}}s / {{count}} req": "全局: 每 {{window}}秒 {{count}}次",
     "Inherit global: Unlimited": "全局: 不限制",
-    "req": "次"
+    "req": "次",
+    'Allowed range: 3-2147483647': '允许范围：3-2147483647',
+    'Enter an integer from 3 to 2147483647': '请输入 3 到 2147483647 之间的整数',
   },
   'zh-TW': {
     "Global rate limit": "全域頻次限制",
@@ -36,7 +40,9 @@ const newKeys = {
     "Rate limit override": "頻次限制單獨覆蓋",
     "Inherit global: {{window}}s / {{count}} req": "全域: 每 {{window}}秒 {{count}}次",
     "Inherit global: Unlimited": "全域: 不限制",
-    "req": "次"
+    "req": "次",
+    'Allowed range: 3-2147483647': '允許範圍：3-2147483647',
+    'Enter an integer from 3 to 2147483647': '請輸入 3 到 2147483647 之間的整數',
   },
   ja: {
     "Global rate limit": "グローバルレート制限",
@@ -46,7 +52,9 @@ const newKeys = {
     "Rate limit override": "レート制限の個別上書き",
     "Inherit global: {{window}}s / {{count}} req": "グローバル: {{window}}秒ごとに{{count}}回",
     "Inherit global: Unlimited": "グローバル: 無制限",
-    "req": "回"
+    "req": "回",
+    'Allowed range: 3-2147483647': '許可範囲: 3-2147483647',
+    'Enter an integer from 3 to 2147483647': '3〜2147483647 の整数を入力してください',
   },
   ru: {
     "Global rate limit": "Глобальный лимит частоты",
@@ -56,7 +64,9 @@ const newKeys = {
     "Rate limit override": "Индивидуальное ограничение",
     "Inherit global: {{window}}s / {{count}} req": "Глобальный: каждые {{window}}с {{count}} запр.",
     "Inherit global: Unlimited": "Глобальный: Без ограничений",
-    "req": "запр."
+    "req": "запр.",
+    'Allowed range: 3-2147483647': 'Допустимый диапазон: 3–2147483647',
+    'Enter an integer from 3 to 2147483647': 'Введите целое число от 3 до 2147483647',
   },
   vi: {
     "Global rate limit": "Giới hạn tần suất toàn cục",
@@ -66,7 +76,9 @@ const newKeys = {
     "Rate limit override": "Ghi đè giới hạn tần suất",
     "Inherit global: {{window}}s / {{count}} req": "Toàn cục: mỗi {{window}}s {{count}} yêu cầu",
     "Inherit global: Unlimited": "Toàn cục: Không giới hạn",
-    "req": "y/c"
+    "req": "y/c",
+    'Allowed range: 3-2147483647': 'Phạm vi cho phép: 3-2147483647',
+    'Enter an integer from 3 to 2147483647': 'Nhập số nguyên từ 3 đến 2147483647',
   },
   fr: {
     "Global rate limit": "Limite de débit globale",
@@ -76,7 +88,9 @@ const newKeys = {
     "Rate limit override": "Remplacement de limite",
     "Inherit global: {{window}}s / {{count}} req": "Global : toutes les {{window}}s {{count}} req",
     "Inherit global: Unlimited": "Global : Illimité",
-    "req": "req"
+    "req": "req",
+    'Allowed range: 3-2147483647': 'Plage autorisée : 3-2147483647',
+    'Enter an integer from 3 to 2147483647': 'Entrez un entier de 3 à 2147483647',
   }
 }
 

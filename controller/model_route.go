@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -371,7 +372,7 @@ func UpdateModelRouteMetricsThreshold(c *gin.Context) {
 	if len(req.Threshold) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "threshold is required and must be an integer from 3 to 999, or null",
+			"message": fmt.Sprintf("threshold is required and must be an integer from %d to %d, or null", operation_setting.MinRateLimitCircuitBreakerThreshold, operation_setting.MaxRateLimitCircuitBreakerThreshold),
 		})
 		return
 	}
@@ -381,7 +382,7 @@ func UpdateModelRouteMetricsThreshold(c *gin.Context) {
 		if err := common.Unmarshal(req.Threshold, &value); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
-				"message": "threshold must be an integer from 3 to 999, or null",
+				"message": fmt.Sprintf("threshold must be an integer from %d to %d, or null", operation_setting.MinRateLimitCircuitBreakerThreshold, operation_setting.MaxRateLimitCircuitBreakerThreshold),
 			})
 			return
 		}
@@ -391,7 +392,7 @@ func UpdateModelRouteMetricsThreshold(c *gin.Context) {
 		*threshold > operation_setting.MaxRateLimitCircuitBreakerThreshold) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "threshold must be an integer from 3 to 999, or null to inherit the global setting",
+			"message": fmt.Sprintf("threshold must be an integer from %d to %d, or null to inherit the global setting", operation_setting.MinRateLimitCircuitBreakerThreshold, operation_setting.MaxRateLimitCircuitBreakerThreshold),
 		})
 		return
 	}
