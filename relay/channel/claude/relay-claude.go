@@ -890,6 +890,14 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)
+
+	// 可用模式据此判定本次转发是否拿到了可用回复：必须收到 message_delta 且产出过可见内容。
+	if info.StreamStatus != nil {
+		content := claudeInfo.ResponseText.Len() > 0 ||
+			(claudeInfo.Usage != nil && claudeInfo.Usage.CompletionTokens > 0)
+		info.StreamStatus.ReportCompletion(claudeInfo.Done, content)
+	}
+
 	return claudeInfo.Usage, nil
 }
 

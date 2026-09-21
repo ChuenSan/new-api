@@ -183,6 +183,13 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
+	// 可用模式据此判定本次转发是否拿到了可用回复：必须收到 [DONE] 且产出过可见内容。
+	if info != nil && info.StreamStatus != nil {
+		terminated := info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone
+		content := responseTextBuilder.Len() > 0 || toolCount > 0 || usage.CompletionTokens > 0
+		info.StreamStatus.ReportCompletion(terminated, content)
+	}
+
 	return usage, nil
 }
 

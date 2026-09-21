@@ -78,6 +78,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	var sawCompleted bool
+	var sawContent bool
+	streamErr := (*types.NewAPIError)(nil)
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -89,9 +92,23 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		sendResponsesStreamData(c, streamResponse, data)
+		if responsesStreamHasContent(&streamResponse) {
+			sawContent = true
+		}
+		switch streamResponse.Type {
+		case "response.failed", "response.error", "error":
+			// 上游在流内明示失败：终止本次转发并交给上层按失败处理
+			streamErr = responsesStreamFailureError(&streamResponse)
+			sr.Stop(streamErr)
+			return
+		}
 		switch streamResponse.Type {
 		case "response.completed":
+			sawCompleted = true
 			if streamResponse.Response != nil {
+				if len(streamResponse.Response.Output) > 0 {
+					sawContent = true
+				}
 				if streamResponse.Response.Usage != nil {
 					if streamResponse.Response.Usage.InputTokens != 0 {
 						usage.PromptTokens = streamResponse.Response.Usage.InputTokens
@@ -130,6 +147,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	})
 
+	if streamErr != nil {
+		return nil, streamErr
+	}
+
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量
 		tempStr := responseTextBuilder.String()
@@ -146,5 +167,47 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
+	// 可用模式据此判定本次转发是否拿到了可用回复：必须收到 response.completed
+	// 且产出过可见内容。
+	if info != nil && info.StreamStatus != nil {
+		info.StreamStatus.ReportCompletion(sawCompleted, sawContent || usage.CompletionTokens > 0)
+	}
+
 	return usage, nil
+}
+
+// responsesStreamHasContent reports whether a stream event carries visible
+// model output rather than lifecycle bookkeeping.
+func responsesStreamHasContent(event *dto.ResponsesStreamResponse) bool {
+	if event == nil {
+		return false
+	}
+	if event.Delta != "" {
+		return true
+	}
+	return event.Type == dto.ResponsesOutputTypeItemDone && event.Item != nil
+}
+
+// responsesStreamFailureError converts an in-stream failure event into an API
+// error so the attempt is retried instead of reported as a 200 success.
+func responsesStreamFailureError(event *dto.ResponsesStreamResponse) *types.NewAPIError {
+	if event != nil {
+		if event.Response != nil {
+			if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+				return types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+			}
+		}
+		if oaiErr := dto.GetOpenAIError(event.Error); oaiErr != nil && oaiErr.Type != "" {
+			return types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+		}
+	}
+	eventType := "response.failed"
+	if event != nil && event.Type != "" {
+		eventType = event.Type
+	}
+	return types.NewOpenAIError(
+		fmt.Errorf("responses stream error: %s", eventType),
+		types.ErrorCodeBadResponse,
+		http.StatusInternalServerError,
+	)
 }

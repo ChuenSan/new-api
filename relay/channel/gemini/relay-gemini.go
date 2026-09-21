@@ -1394,6 +1394,12 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 	}
 
+	// Gemini 流没有协议终结事件，可用模式只要求产出过可见内容。
+	if info.StreamStatus != nil {
+		content := responseText.Len() > 0 || imageCount > 0 || usage.CompletionTokens > 0
+		info.StreamStatus.ReportCompletion(true, content)
+	}
+
 	return usage, nil
 }
 

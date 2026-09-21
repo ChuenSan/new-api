@@ -46,6 +46,70 @@ func TestRelayProductionCompletedNormally(t *testing.T) {
 	}
 }
 
+// TestRelayProductionCompletedNormallyDeferredOutput guards the availability-mode
+// deferred path: buffered output counts as success only when the stream handler
+// reported both a protocol terminator and visible content.
+func TestRelayProductionCompletedNormallyDeferredOutput(t *testing.T) {
+	deferred := func(reason relaycommon.StreamEndReason, endErr error, report, terminated, content bool) *relaycommon.RelayInfo {
+		st := relaycommon.NewStreamStatus()
+		st.SetEndReason(reason, endErr)
+		if report {
+			st.ReportCompletion(terminated, content)
+		}
+		return &relaycommon.RelayInfo{IsStream: true, StreamStatus: st, DeferredResponse: true}
+	}
+	nonDeferred := deferred(relaycommon.StreamEndReasonDone, nil, true, false, false)
+	nonDeferred.DeferredResponse = false
+
+	tests := []struct {
+		name string
+		info *relaycommon.RelayInfo
+		want bool
+	}{
+		{name: "deferred usable", info: deferred(relaycommon.StreamEndReasonDone, nil, true, true, true), want: true},
+		{name: "deferred missing content", info: deferred(relaycommon.StreamEndReasonDone, nil, true, true, false), want: false},
+		{name: "deferred missing terminator", info: deferred(relaycommon.StreamEndReasonDone, nil, true, false, true), want: false},
+		{name: "deferred without verdict keeps legacy result", info: deferred(relaycommon.StreamEndReasonDone, nil, false, false, false), want: true},
+		{name: "deferred error end is never success", info: deferred(relaycommon.StreamEndReasonEOF, errors.New("stream failed"), true, true, true), want: false},
+		{name: "non-deferred keeps legacy result", info: nonDeferred, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := relayProductionCompletedNormally(tt.info); got != tt.want {
+				t.Fatalf("relayProductionCompletedNormally() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAvailabilityAttemptFailed(t *testing.T) {
+	reported := func(terminated, content bool) *relaycommon.RelayInfo {
+		st := relaycommon.NewStreamStatus()
+		st.ReportCompletion(terminated, content)
+		return &relaycommon.RelayInfo{IsStream: true, StreamStatus: st}
+	}
+
+	tests := []struct {
+		name string
+		info *relaycommon.RelayInfo
+		want bool
+	}{
+		{name: "nil", info: nil, want: false},
+		{name: "no stream status", info: &relaycommon.RelayInfo{IsStream: true}, want: false},
+		{name: "unreported verdict", info: &relaycommon.RelayInfo{IsStream: true, StreamStatus: relaycommon.NewStreamStatus()}, want: false},
+		{name: "reported usable", info: reported(true, true), want: false},
+		{name: "reported empty", info: reported(true, false), want: true},
+		{name: "reported unterminated", info: reported(false, true), want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := availabilityAttemptFailed(tt.info); got != tt.want {
+				t.Fatalf("availabilityAttemptFailed() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRequestIsActive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

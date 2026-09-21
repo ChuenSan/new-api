@@ -392,8 +392,10 @@ const (
 type ResponsesStreamResponse struct {
 	Type     string                   `json:"type"`
 	Response *OpenAIResponsesResponse `json:"response,omitempty"`
-	Delta    string                   `json:"delta,omitempty"`
-	Item     *ResponsesOutput         `json:"item,omitempty"`
+	// error 事件把错误放在事件顶层，而非 response 内
+	Error any              `json:"error,omitempty"`
+	Delta string           `json:"delta,omitempty"`
+	Item  *ResponsesOutput `json:"item,omitempty"`
 	// - response.function_call_arguments.delta
 	// - response.function_call_arguments.done
 	OutputIndex  *int                           `json:"output_index,omitempty"`

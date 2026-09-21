@@ -36,6 +36,9 @@ type StreamStatus struct {
 	mu         sync.Mutex
 	Errors     []StreamErrorEntry
 	ErrorCount int
+
+	completionReported bool
+	completionOK       bool
 }
 
 func NewStreamStatus() *StreamStatus {
@@ -94,6 +97,39 @@ func (s *StreamStatus) IsNormalEnd() bool {
 		s.EndReason == StreamEndReasonHandlerStop
 }
 
+// ReportCompletion records the stream handler's verdict: whether the upstream
+// protocol terminator arrived and whether any client-visible output was
+// produced. Formats that never report keep the legacy verdict.
+func (s *StreamStatus) ReportCompletion(terminated, content bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.completionReported = true
+	s.completionOK = terminated && content
+}
+
+// CompletionReported reports whether a handler supplied a completion verdict.
+func (s *StreamStatus) CompletionReported() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.completionReported
+}
+
+// CompletionOK returns the reported verdict; false when nothing was reported.
+func (s *StreamStatus) CompletionOK() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.completionOK
+}
+
 func (s *StreamStatus) Summary() string {
 	if s == nil {
 		return "StreamStatus<nil>"
@@ -106,6 +142,9 @@ func (s *StreamStatus) Summary() string {
 	s.mu.Lock()
 	if s.ErrorCount > 0 {
 		fmt.Fprintf(b, " soft_errors=%d", s.ErrorCount)
+	}
+	if s.completionReported {
+		fmt.Fprintf(b, " completion_ok=%t", s.completionOK)
 	}
 	s.mu.Unlock()
 	return b.String()

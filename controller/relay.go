@@ -227,6 +227,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 	availabilityMode := middleware.IsTokenAvailabilityMode(c) && relayFormat != types.RelayFormatOpenAIRealtime
 
+	// 可用模式下流式输出先写入缓冲区：只有拿到可用回复才放行给客户端，
+	// 否则整段丢弃并继续重试。心跳保留直通，避免长时间重试时连接被判定为空闲。
+	var responseBuffer *helper.BufferedWriter
+	if availabilityMode && relayInfo.IsStream {
+		responseBuffer = helper.NewStreamBufferedWriter(c.Writer)
+		c.Writer = responseBuffer
+		relayInfo.DeferredResponse = true
+		defer responseBuffer.Discard()
+	}
+
 	for {
 		availabilityRetry := false
 		roundAttemptedUpstream := false
@@ -268,11 +278,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 
 			if newAPIError == nil {
-				relayInfo.LastError = nil
-				notifyModelRouteProduction(c, channel, relayInfo, true, http.StatusOK, false)
-				// release concurrency after success (stream already finished when helper returns)
-				service.ReleaseModelRouteProductionSlot(c)
-				return
+				// 可用模式下"正常结束但没有有效内容"不算成功：本次输出作废，按失败继续重试。
+				// 缓冲区已因超出上限而放行时不再重试，避免向客户端重复输出。
+				if availabilityAttemptFailed(relayInfo) && (responseBuffer == nil || !responseBuffer.Committed()) {
+					newAPIError = types.NewErrorWithStatusCode(fmt.Errorf("empty response from upstream"),
+						types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
+				} else {
+					relayInfo.LastError = nil
+					if responseBuffer != nil {
+						responseBuffer.Commit()
+						relayInfo.ResponseCommitted = true
+					}
+					notifyModelRouteProduction(c, channel, relayInfo, true, http.StatusOK, false)
+					// release concurrency after success (stream already finished when helper returns)
+					service.ReleaseModelRouteProductionSlot(c)
+					return
+				}
 			}
 
 			availabilityRetry = true
@@ -753,14 +774,35 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	return true
 }
 
+// availabilityAttemptFailed reports whether a nil-error attempt produced no usable
+// response. Only handlers that explicitly report a verdict are judged, so streaming
+// paths that never report keep their legacy success semantics.
+func availabilityAttemptFailed(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil || relayInfo.StreamStatus == nil {
+		return false
+	}
+	if !relayInfo.StreamStatus.CompletionReported() {
+		return false
+	}
+	return !relayInfo.StreamStatus.CompletionOK()
+}
+
 func relayProductionCompletedNormally(relayInfo *relaycommon.RelayInfo) bool {
 	if relayInfo == nil {
 		return false
 	}
-	if relayInfo.StreamStatus == nil {
+	st := relayInfo.StreamStatus
+	if st == nil {
 		return !relayInfo.IsStream
 	}
-	return relayInfo.StreamStatus.IsNormalEnd() && relayInfo.StreamStatus.EndError == nil && !relayInfo.StreamStatus.HasErrors()
+	if !st.IsNormalEnd() || st.EndError != nil || st.HasErrors() {
+		return false
+	}
+	// 可用模式的延迟放行链路额外要求上游产出过有效内容，否则本次转发不算成功。
+	if relayInfo.DeferredResponse && st.CompletionReported() {
+		return st.CompletionOK()
+	}
+	return true
 }
 
 // notifyModelRouteProduction feeds production outcomes into modelroute when model_priority is enabled.

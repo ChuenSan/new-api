@@ -102,6 +102,11 @@ type RelayInfo struct {
 	StartTime         time.Time
 	FirstResponseTime time.Time
 	isFirstResponse   bool
+	// DeferredResponse is set when relay output is buffered until a usable
+	// upstream response is obtained, so HasSendResponse only turns true once
+	// that buffer was released to the client.
+	DeferredResponse  bool
+	ResponseCommitted bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -677,6 +682,12 @@ func (info *RelayInfo) SetFirstResponseTime() {
 }
 
 func (info *RelayInfo) HasSendResponse() bool {
+	if info == nil {
+		return false
+	}
+	if info.DeferredResponse {
+		return info.ResponseCommitted
+	}
 	return info.FirstResponseTime.After(info.StartTime)
 }
 
