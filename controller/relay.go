@@ -279,8 +279,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 			if newAPIError == nil {
 				// 可用模式下"正常结束但没有有效内容"不算成功：本次输出作废，按失败继续重试。
-				// 缓冲区已因超出上限而放行时不再重试，避免向客户端重复输出。
-				if availabilityAttemptFailed(relayInfo) && (responseBuffer == nil || !responseBuffer.Committed()) {
+				// 客户端已断开时不再判定：输出没有接收方，也不该记成上游空响应。
+				// 缓冲区已因超出上限而放行时同样不再重试，避免向客户端重复输出。
+				if requestIsActive(c) && availabilityAttemptFailed(relayInfo) && (responseBuffer == nil || !responseBuffer.Committed()) {
 					newAPIError = types.NewErrorWithStatusCode(fmt.Errorf("empty response from upstream"),
 						types.ErrorCodeEmptyResponse, http.StatusInternalServerError)
 				} else {
